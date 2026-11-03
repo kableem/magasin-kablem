@@ -1,0 +1,347 @@
+<div class="page-entete">
+  <div>
+    <h1>Articles</h1>
+    <p>Les {{ articles().length }} références utilisées au magasin. Choisissez une famille, puis cherchez la référence.</p>
+  </div>
+  <button type="button" class="btn btn-principal" (click)="ouvrirAjout()">
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+    Nouvel article
+  </button>
+</div>
+
+<!-- Onglets : une famille à la fois -->
+<div class="onglets" role="tablist" aria-label="Familles d'articles">
+  @for (f of familles; track f.valeur) {
+    <button
+      type="button"
+      role="tab"
+      class="onglet"
+      [attr.data-famille]="f.valeur"
+      [class.actif]="famille() === f.valeur"
+      [attr.aria-selected]="famille() === f.valeur"
+      (click)="choisirFamille(f.valeur)"
+    >
+      <span class="icone">
+        @switch (f.valeur) {
+          @case ('bobine') {
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 4.24 2 7v10c0 2.76 4.48 5 10 5s10-2.24 10-5V7c0-2.76-4.48-5-10-5zm0 2c4.42 0 8 1.79 8 3s-3.58 3-8 3-8-1.79-8-3 3.58-3 8-3zm0 6.5a2 2 0 1 1 0-4 2 2 0 0 1 0 4zM12 20c-4.42 0-8-1.79-8-3v-2.23C5.82 16.13 8.7 17 12 17s6.18-.87 8-2.23V17c0 1.21-3.58 3-8 3z" /></svg>
+          }
+          @case ('cosse') {
+            <svg viewBox="0 0 24 24"><path d="M17 3a4 4 0 0 0-3.86 5.03L9.6 11.57 7 9 3 13l1.5 1.5L7 12l1.17 1.17-4.88 4.88 1.41 1.41 4.88-4.88L10.75 15 8.5 17.5 10 19l4-4-2.57-2.6 3.54-3.54A4 4 0 1 0 17 3zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" /></svg>
+          }
+          @default {
+            <svg viewBox="0 0 24 24"><path d="M16 7V3h-2v4h-4V3H8v4H6v6l3.5 3.5V21h5v-4.5L18 13V7h-2zm0 5.17-3.5 3.5V19h-1v-3.33L8 12.17V9h8v3.17z" /></svg>
+          }
+        }
+      </span>
+      <span class="texte">
+        <strong>{{ f.pluriel }}</strong>
+        <small>{{ f.valeur === 'connecteur' ? categoriesConnecteur().length + ' familles · ' : '' }}{{ compteFamille()[f.valeur] }} références</small>
+      </span>
+      <b class="nombre">{{ compteFamille()[f.valeur] }}</b>
+    </button>
+  }
+</div>
+
+<section class="panneau carte" [attr.data-famille]="famille()">
+  <!-- Recherche dans la famille -->
+  <div class="barre-recherche">
+    <label class="recherche">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+      <input
+        [placeholder]="'Rechercher dans les ' + libelleOnglet().pluriel.toLowerCase() + '…'"
+        [ngModel]="recherche()"
+        (ngModelChange)="chercher($event)"
+        autocomplete="off"
+      />
+      @if (recherche()) {
+        <button type="button" class="effacer" (click)="chercher('')" aria-label="Effacer la recherche">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      }
+    </label>
+    <span class="compte">
+      <strong>{{ filtres().length }}</strong> {{ filtres().length > 1 ? 'références' : 'référence' }}
+      @if (categorie()) {
+        · {{ categorie() }}
+      }
+    </span>
+  </div>
+
+  @if (erreur()) {
+    <p class="erreur">{{ erreur() }}</p>
+  }
+
+  <div class="corps" [class.avec-familles]="true">
+    <!-- Cosses : par type (axiale, plat) -->
+    @if (famille() === 'cosse') {
+      <nav class="sous-familles" aria-label="Types de cosses">
+        <button type="button" [class.actif]="!typeCosse()" (click)="choisirTypeCosse(null)">
+          <span>Tous les types</span><b>{{ q() ? filtres().length : compteFamille().cosse }}</b>
+        </button>
+        @for (t of comptesTypeCosse(); track t.valeur) {
+          <button type="button" class="type-cosse" [attr.data-cosse]="t.valeur" [class.actif]="typeCosse() === t.valeur" [class.vide]="q() && !t.trouves" (click)="choisirTypeCosse(t.valeur)">
+            <span>{{ t.pluriel }} <small>{{ t.valeur === 'axiale' ? '3 par emplacement' : '10 par emplacement' }}</small></span><b>{{ q() ? t.trouves : t.total }}</b>
+          </button>
+        }
+        <p class="aide-taille">À l'import, chaque cosse prend le type de sa référence. Cliquez sur Axiale · Plat d'une référence pour le changer.</p>
+        <button type="button" class="historique-btn" (click)="ouvrirHistorique()">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12z" /></svg>
+          Historique des changements
+        </button>
+      </nav>
+    }
+
+    <!-- Bobines : par taille (nombre de bobines par palette) -->
+    @if (famille() === 'bobine') {
+      <nav class="sous-familles" aria-label="Tailles de bobines">
+        <button type="button" [class.actif]="!taille()" (click)="choisirTaille(null)">
+          <span>Toutes les tailles</span><b>{{ q() ? filtres().length : compteFamille().bobine }}</b>
+        </button>
+        @for (t of comptesTaille(); track t.par) {
+          <button type="button" class="taille" [attr.data-taille]="t.taille" [class.actif]="taille() === t.par" [class.vide]="q() && !t.trouves" (click)="choisirTaille(t.par)">
+            <span>{{ t.pluriel }} <small>{{ t.par }} par palette</small></span><b>{{ q() ? t.trouves : t.total }}</b>
+          </button>
+        }
+        <p class="aide-taille">À l'import, chaque bobine prend la taille de sa référence. Cliquez sur Petite · Moyenne · Grande d'une référence pour la changer.</p>
+        <button type="button" class="historique-btn" (click)="ouvrirHistorique()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12z" /></svg>
+          Historique des changements
+        </button>
+      </nav>
+    }
+
+    <!-- Connecteurs : liste des familles -->
+    @if (famille() === 'connecteur') {
+      <nav class="sous-familles" aria-label="Familles de connecteurs">
+        <button type="button" [class.actif]="!categorie()" (click)="choisirCategorie('')">
+          <span>Toutes les familles</span><b>{{ q() ? filtres().length : compteFamille().connecteur }}</b>
+        </button>
+        @for (c of categoriesConnecteur(); track c.nom) {
+          <button type="button" [class.actif]="categorie() === c.nom" [class.vide]="q() && !c.trouves" (click)="choisirCategorie(c.nom)">
+            <span>{{ c.nom }}</span><b>{{ q() ? c.trouves : c.total }}</b>
+          </button>
+        }
+      </nav>
+    }
+
+    <!-- Références -->
+    <div class="zone">
+      @if (chargement()) {
+        <p class="etat">Chargement…</p>
+      } @else if (!filtres().length) {
+        <div class="etat">
+          <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+          <strong>Aucune référence trouvée</strong>
+          <span>{{ recherche() ? '« ' + recherche() + ' » n\'existe pas dans les ' + libelleOnglet().pluriel.toLowerCase() + (categorie() ? ' (' + categorie() + ')' : '') + '.' : 'Cette famille est vide.' }}</span>
+        </div>
+      } @else {
+        <ul class="grille">
+          @for (a of visibles(); track a.id) {
+            <li class="article">
+              @let m = morceaux(a.reference);
+              <span class="ref" [title]="a.reference">{{ m.avant }}@if (m.trouve) {<mark>{{ m.trouve }}</mark>}{{ m.apres }}</span>
+              @if (famille() === 'connecteur' && !categorie()) {
+                <small class="tag">{{ a.categorie }}</small>
+              }
+              @if (a.famille === 'cosse') {
+                <span class="bascule-taille" role="radiogroup" [attr.aria-label]="'Type de ' + a.reference" [class.occupe]="tailleEnCours() === a.id">
+                  @for (x of typesCosse; track x.valeur) {
+                    <button
+                      type="button"
+                      role="radio"
+                      [attr.data-cosse]="x.valeur"
+                      [class.actif]="a.type_cosse === x.valeur"
+                      [attr.aria-checked]="a.type_cosse === x.valeur"
+                      [disabled]="!!tailleEnCours()"
+                      (click)="changerTypeCosse(a, x.valeur)"
+                      [title]="a.type_cosse === x.valeur ? 'Cosse ' + x.libelle.toLowerCase() : 'Passer en cosse ' + x.libelle.toLowerCase()"
+                    >{{ x.libelle }}<small>{{ x.valeur === 'axiale' ? 3 : 10 }}</small></button>
+                  }
+                </span>
+              }
+              @if (a.famille === 'bobine') {
+                @let t = taillePalette(a.bobines_par_palette);
+                <span class="bascule-taille" role="radiogroup" [attr.aria-label]="'Taille de ' + a.reference" [class.occupe]="tailleEnCours() === a.id">
+                  @for (x of tailles; track x.par) {
+                    <button
+                      type="button"
+                      role="radio"
+                      [attr.data-taille]="x.taille"
+                      [class.actif]="t.par === x.par"
+                      [attr.aria-checked]="t.par === x.par"
+                      [disabled]="!!tailleEnCours()"
+                      (click)="changerTaille(a, x.par)"
+                      [title]="t.par === x.par ? x.libelle + ' bobine · ' + x.par + ' par palette' : 'Passer en ' + x.libelle.toLowerCase() + ' bobine (' + x.par + ' par palette)'"
+                    >{{ x.libelle.charAt(0) }}<small>{{ x.par }}</small></button>
+                  }
+                </span>
+              }
+              <span class="actions">
+                @if (a.famille === 'bobine' || a.famille === 'cosse') {
+                  <button type="button" (click)="ouvrirHistorique(a.reference)" title="Historique des changements" aria-label="Historique des changements">
+                    <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12z" /></svg>
+                  </button>
+                }
+                <button type="button" (click)="ouvrirModification(a)" title="Modifier" aria-label="Modifier">
+                  <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                </button>
+                <button type="button" class="danger" (click)="aSupprimer.set(a)" title="Supprimer" aria-label="Supprimer">
+                  <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
+                </button>
+              </span>
+            </li>
+          }
+        </ul>
+        @if (filtres().length > visibles().length) {
+          <button type="button" class="btn btn-secondaire plus" (click)="plus()">
+            Afficher plus · {{ filtres().length - visibles().length }} restante(s)
+          </button>
+        }
+      }
+    </div>
+  </div>
+</section>
+
+<!-- Ajout / modification -->
+@if (formOuvert()) {
+  <div class="fond" (click)="formOuvert.set(false)">
+    <form class="modale" (click)="$event.stopPropagation()" (ngSubmit)="enregistrer()" novalidate>
+      <div class="modale-entete">
+        <h2>{{ editionId() ? "Modifier l'article" : 'Nouvel article' }}</h2>
+        <button type="button" class="icone-btn" (click)="formOuvert.set(false)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+      @if (erreurForm()) {
+        <p class="erreur">{{ erreurForm() }}</p>
+      }
+      <div class="champ">
+        <span>Famille</span>
+        <div class="choix">
+          @for (f of familles; track f.valeur) {
+            <button type="button" [class.actif]="form.famille === f.valeur" [attr.data-famille]="f.valeur" (click)="form.famille = f.valeur; erreurForm.set('')">{{ f.libelle }}</button>
+          }
+        </div>
+      </div>
+      @if (form.famille === 'connecteur') {
+        <label class="champ">
+          Famille de connecteur
+          <input name="categorie" list="categories-connecteur" placeholder="ex. GCOR, NASTRO, COMPOSANT PLASTIQUE" autocomplete="off" [(ngModel)]="form.categorie" />
+          <datalist id="categories-connecteur">
+            @for (c of categoriesConnecteur(); track c.nom) {
+              <option [value]="c.nom"></option>
+            }
+          </datalist>
+        </label>
+      }
+      @if (form.famille === 'cosse') {
+        <div class="champ">
+          <span>Type de cosse</span>
+          <div class="choix cartes" role="radiogroup" aria-label="Type de cosse">
+            @for (t of typesCosse; track t.valeur) {
+              <button type="button" role="radio" [attr.aria-checked]="form.type_cosse === t.valeur" [class.actif]="form.type_cosse === t.valeur" [attr.data-cosse]="t.valeur" (click)="form.type_cosse = t.valeur">
+                <svg class="coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                <strong>{{ t.libelle }}</strong>
+                <small>{{ t.valeur === 'axiale' ? '3' : '10' }} par emplacement</small>
+              </button>
+            }
+          </div>
+          <small class="aide">Type donné aux cosses de cette référence dans les prochains imports.</small>
+        </div>
+      }
+      @if (form.famille === 'bobine') {
+        <div class="champ">
+          <span>Taille (bobines par palette)</span>
+          <div class="choix cartes" role="radiogroup" aria-label="Taille de bobine">
+            @for (t of tailles; track t.par) {
+              <button type="button" role="radio" [attr.aria-checked]="form.bobines_par_palette === t.par" [class.actif]="form.bobines_par_palette === t.par" [attr.data-taille]="t.taille" (click)="form.bobines_par_palette = t.par">
+                <svg class="coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                <strong>{{ t.libelle }}</strong>
+                <small>{{ t.par }} par palette</small>
+              </button>
+            }
+          </div>
+          <small class="aide">Taille donnée aux bobines de cette référence dans les prochains imports.</small>
+        </div>
+      }
+      <label class="champ">
+        Référence
+        <input name="reference" class="mono" placeholder="ex. CFLR9YAT30035800002T" autocomplete="off" maxlength="50" [(ngModel)]="form.reference" />
+      </label>
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="formOuvert.set(false)">Annuler</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrement()">{{ enregistrement() ? 'Enregistrement…' : 'Enregistrer' }}</button>
+      </div>
+    </form>
+  </div>
+}
+
+<!-- Confirmation de suppression -->
+@if (aSupprimer(); as a) {
+  <div class="fond" (click)="aSupprimer.set(null)">
+    <div class="modale petite" (click)="$event.stopPropagation()">
+      <div class="modale-entete"><h2>Supprimer cet article ?</h2></div>
+      <p><span class="mono">{{ a.reference }}</span> · {{ a.categorie }} sera retiré du catalogue.</p>
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aSupprimer.set(null)">Annuler</button>
+        <button type="button" class="btn btn-danger" (click)="confirmerSuppression()">Supprimer</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Historique des changements : taille des bobines, type des cosses -->
+@if (historiqueOuvert()) {
+  <div class="fond" (click)="historiqueOuvert.set(false)">
+    <div class="modale historique" (click)="$event.stopPropagation()">
+      <div class="modale-entete">
+        <h2>{{ historiqueFamille() === 'cosse' ? 'Historique des changements de type' : historiqueFamille() === 'bobine' ? 'Historique des changements de taille' : 'Historique des changements' }}</h2>
+        <button type="button" class="icone-btn" (click)="historiqueOuvert.set(false)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+      @if (historiqueReference()) {
+        <p class="filtre-historique">
+          <span class="mono">{{ historiqueReference() }}</span>
+          <button type="button" class="lien" (click)="historiqueReference.set(''); chargerHistorique()">Voir toutes les références</button>
+        </p>
+      }
+      @if (historiqueChargement()) {
+        <p class="etat">Chargement…</p>
+      } @else if (!historiqueAffiche().length) {
+        <p class="etat">Aucun changement{{ historiqueReference() ? ' pour cette référence' : '' }}.</p>
+      } @else {
+        <div class="table-historique">
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Référence</th><th>Changement</th><th>Par</th></tr>
+            </thead>
+            <tbody>
+              @for (h of historiqueAffiche(); track h.id) {
+                <tr>
+                  <td>{{ h.date | date: 'dd/MM/yyyy HH:mm' }}</td>
+                  <td class="mono">{{ h.reference }}</td>
+                  <td>
+                    @if (h.famille === 'cosse') {
+                      <small class="tag cosse" [attr.data-cosse]="h.type_cosse_avant">{{ libelleTypeCosse(h.type_cosse_avant) }}</small>
+                      →
+                      <small class="tag cosse" [attr.data-cosse]="h.type_cosse_apres">{{ libelleTypeCosse(h.type_cosse_apres) }}</small>
+                    } @else {
+                      @let av = taillePalette(h.avant);
+                      @let ap = taillePalette(h.apres);
+                      <small class="tag taille" [attr.data-taille]="av.taille">{{ av.libelle }} · {{ av.par }}</small>
+                      →
+                      <small class="tag taille" [attr.data-taille]="ap.taille">{{ ap.libelle }} · {{ ap.par }}</small>
+                    }
+                  </td>
+                  <td>{{ h.par || h.matricule || '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+}

@@ -1,0 +1,16 @@
+{
+  "name": "magasin-kablem",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix mobile",
+    "base:restaurer": "node backend/scripts/restaurer-base.js",
+    "build": "npm run build --prefix frontend && npm run build --prefix mobile",
+    "start": "npm start --prefix backend",
+    "dev": "concurrently -n API,ANGULAR -c blue,red \"npm run dev --prefix backend\" \"npm start --prefix frontend\"",
+    "tout": "concurrently -n API,WEB,MOBILE -c blue,red,green \"npm run dev --prefix backend\" \"npm start --prefix frontend\" \"npm start --prefix mobile\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

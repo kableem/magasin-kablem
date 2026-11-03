@@ -1,0 +1,70 @@
+/* Couleur propre à chaque type de produit */
+[data-type='bobine'] { --type: var(--rouge); --type-fond: #fdecec; }
+[data-type='cosse'] { --type: var(--bleu); --type-fond: #e6f1fb; }
+[data-type='connecteur'] { --type: var(--bleu-logo); --type-fond: #eceef8; }
+
+.page-entete a.btn { text-decoration: none; }
+
+/* Titre avec pastille rouge (sortie de stock) */
+.titre { display: flex; align-items: center; gap: 12px; }
+.pastille { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: var(--rouge); }
+.pastille svg { width: 24px; fill: #fff; }
+
+/* ---------- Filtres ---------- */
+.barre { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 18px; }
+.resultat { font-size: 13.5px; color: var(--gris); }
+.filtres {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1fr 1fr 1fr auto;
+  align-items: end;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f7;
+}
+.filtres label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--gris); }
+.filtres input, .filtres select { height: 38px; }
+.effacer { height: 38px; }
+.effacer svg { width: 16px; }
+
+/* ---------- Tableau ---------- */
+.code { font-family: Consolas, monospace; font-size: 14px; }
+.ref { font-weight: 700; }
+.droite { text-align: right; }
+.date { color: var(--gris); }
+.vide a { color: var(--bleu); font-weight: 600; }
+.badge-type {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--type);
+  background: var(--type-fond);
+  border-radius: 999px;
+}
+
+.destination {
+  display: inline-block;
+  min-width: 36px;
+  padding: 3px 10px;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+  background: var(--nuit);
+  border-radius: 8px;
+}
+
+@media (max-width: 1100px) {
+  .filtres { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .filtres { grid-template-columns: 1fr; }
+}
+
+/* Origine de la sortie */
+.origine { display: inline-block; padding: 2px 10px; font-size: 12px; font-weight: 700; border-radius: 999px; white-space: nowrap; }
+.origine.mobile { color: #137a3e; background: #e2f6ea; }
+.origine.secours { color: #8a5a00; background: #fff1d6; }
+.origine.web { color: #5b6478; background: #eef1f6; }
+.origine.hors-fifo { margin-left: 4px; color: #b42318; background: #fde8e6; }
+.motif { display: block; max-width: 220px; margin-top: 3px; overflow: hidden; font-size: 12px; color: #5b6478; text-overflow: ellipsis; white-space: nowrap; }

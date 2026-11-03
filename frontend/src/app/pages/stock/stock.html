@@ -1,0 +1,516 @@
+<div class="page-entete">
+  <div>
+    <h1>Gestion de stock</h1>
+    <p>Stock actuel du magasin, alimenté par les imports. Les lots sont classés en FIFO.</p>
+  </div>
+  <div class="actions-entete">
+    <button
+      type="button"
+      class="btn btn-secondaire btn-synchro"
+      [disabled]="verificationEnCours()"
+      (click)="synchroniser()"
+      title="Comparer le stock du magasin à la base de données"
+    >
+      <svg viewBox="0 0 24 24" [class.tourne]="verificationEnCours()"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" /></svg>
+      {{ verificationEnCours() ? 'Vérification…' : 'Synchroniser' }}
+      @if (verification(); as v) {
+        <span class="voyant" [attr.data-statut]="v.statut" [title]="titresStatut[v.statut]"></span>
+      }
+    </button>
+    @if (nbSansEmplacement()) {
+      <button type="button" class="btn btn-secondaire" [disabled]="rangement()" (click)="rangerAutomatiquement()">
+        <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" /></svg>
+        {{ rangement() ? 'Rangement…' : 'Ranger automatiquement (' + nbSansEmplacement() + ')' }}
+      </button>
+    }
+  <a class="btn btn-principal" routerLink="/import">
+    <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
+    Imports
+  </a>
+  </div>
+</div>
+
+<p class="regle-niveaux">
+  Rangement : <span data-type="bobine">Bobines → niveau 0</span>
+  <span data-type="cosse">Cosses → niveaux 1 et 2 (et 3 du bloc E)</span>
+  <span data-type="connecteur">Connecteurs → niveaux 3 et 4</span>
+</p>
+
+@if (nbTampon()) {
+  <p class="alerte-tampon">
+    {{ nbTampon() }} produit(s) en <b>zone tampon</b> : « Ranger automatiquement » les placera dès qu'une place se
+    libère, les plus anciens lots d'abord.
+  </p>
+}
+
+<!-- Une carte par type de produit (cliquable pour filtrer) -->
+<div class="stats">
+  @for (t of parType(); track t.valeur) {
+    <button
+      type="button"
+      class="carte-type"
+      [attr.data-type]="t.valeur"
+      [class.actif]="filtreType() === t.valeur"
+      (click)="filtrerType(t.valeur)"
+    >
+      <span class="nom">{{ t.libelle }}s</span>
+      <strong>{{ nombre(t.quantite) }}</strong>
+      <small>{{ t.references }} référence(s)</small>
+    </button>
+  }
+</div>
+
+<section class="carte">
+  <div class="outils">
+    <label class="recherche">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+      <input placeholder="Rechercher par référence (ex. F0411)…" [ngModel]="recherche()" (ngModelChange)="recherche.set($event)" />
+    </label>
+    @if (filtreType()) {
+      <button type="button" class="btn btn-secondaire" (click)="filtreType.set('')">Tous les types</button>
+    }
+  </div>
+
+  @if (erreur()) {
+    <p class="erreur">{{ erreur() }}</p>
+  }
+
+  <!-- Sortie vers la production : une ligne par référence trouvée -->
+  @if (referencesTrouvees().length) {
+    <div class="barre-export">
+      @for (r of referencesTrouvees(); track r.reference) {
+        <div class="ref-export" [attr.data-type]="r.type">
+          <span class="code ref">{{ r.reference }}</span>
+          <span class="badge-type">{{ libelle(r) }}</span>
+          <span class="dispo">{{ nombre(r.disponible) }} en stock</span>
+          <button type="button" class="btn btn-principal btn-export" (click)="ouvrirExport(r)">
+            <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z" /></svg>
+            Exporter
+          </button>
+          @if (estAdministrateur()) {
+            <button type="button" class="btn btn-secondaire btn-sans-fifo" (click)="ouvrirExport(r, true)" title="Administrateur : choisir les lots et emplacements à sortir">
+              Exporter sans FIFO
+            </button>
+          }
+        </div>
+      }
+    </div>
+  }
+
+  <div class="table-defilante">
+    <table>
+      <thead>
+        <tr>
+          <th>Référence</th>
+          <th>Type</th>
+          <th>Lot</th>
+          <th class="droite">Quantité</th>
+          <th>Date de réception</th>
+          <th>Emplacement</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (l of filtrees(); track l.id; let i = $index) {
+          <tr [class.separation]="nouvelleReference(i)">
+            <td class="code ref">{{ l.reference }}</td>
+            <td><span class="badge-type" [attr.data-type]="l.type">{{ libelle(l) }}</span></td>
+            <td class="code">{{ l.lot }}</td>
+            <td class="droite"><strong>{{ nombre(l.quantite) }}</strong></td>
+            <td class="date">{{ l.date_reception | date: 'dd/MM/yyyy HH:mm' }}</td>
+            <td>
+              @if (!estAdmin()) {
+                <!-- Magasinier : consultation seulement -->
+                @if (l.emplacement) {
+                  <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)" [attr.title]="'Code application : ' + l.emplacement">{{ nom(l.emplacement) }}</span>
+                } @else {
+                  <span class="non-range">Non rangé</span>
+                }
+              } @else if (l.emplacement) {
+                <button
+                  type="button"
+                  class="etiquette-empl"
+                  [class.tampon]="estTampon(l.emplacement)"
+                  (click)="ouvrirAffectation(l)"
+                  [attr.title]="'Changer l’emplacement (code application : ' + l.emplacement + ')'"
+                >
+                  {{ nom(l.emplacement) }}
+                </button>
+              } @else {
+                <button type="button" class="btn-affecter" (click)="ouvrirAffectation(l)">
+                  <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" /></svg>
+                  Affecter
+                </button>
+              }
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="6" class="vide">
+              @if (chargement()) {
+                Chargement…
+              } @else if (lignes().length) {
+                Aucune référence trouvée
+              } @else {
+                Le stock est vide. <a routerLink="/import">Synchronisez les imports de l'Italie</a>.
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+      @if (filtrees().length) {
+        <tfoot>
+          <tr>
+            <td colspan="3">Totale <small>({{ filtrees().length }} ligne(s))</small></td>
+            <td class="droite"><strong>{{ nombre(total()) }}</strong></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      }
+    </table>
+  </div>
+</section>
+
+<!-- Affectation d'un emplacement à une palette -->
+@if (aAffecter(); as l) {
+  <div class="fond" (click)="aAffecter.set(null)">
+    <form class="modale petite-modale" (click)="$event.stopPropagation()" (ngSubmit)="affecter(codeSaisi())" novalidate>
+      <div class="modale-entete">
+        <h2>{{ l.emplacement ? "Changer l'emplacement" : 'Affecter un emplacement' }}</h2>
+        <button type="button" class="icone-btn" (click)="aAffecter.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      <p class="palette-info">
+        <span class="code ref">{{ l.reference }}</span> · lot <span class="code">{{ l.lot }}</span> · {{ nombre(l.quantite) }}
+      </p>
+
+      @if (erreurAffectation()) {
+        <p class="erreur">{{ erreurAffectation() }}</p>
+      }
+
+      <label class="champ-empl">
+        Emplacement (numéro de l'étiquette ou code)
+        <input
+          name="emplacement"
+          list="emplacements-libres"
+          placeholder="ex. D000"
+          maxlength="6"
+          autocomplete="off"
+          [ngModel]="codeSaisi()"
+          (ngModelChange)="codeSaisi.set($event.toUpperCase()); erreurAffectation.set('')"
+        />
+        <datalist id="emplacements-libres">
+          @for (code of emplacementsLibres(); track code) {
+            <option [value]="nom(code)">{{ nom(code) !== code ? code : '' }}</option>
+          }
+        </datalist>
+        <small>
+          {{ libelle(l) }} : {{ libelleNiveaux[l.type] }} ·
+          @if (l.type === 'connecteur') {
+            {{ l.quantite }} carton(s), {{ l.poids_total }} kg · {{ limites().poids_max }} kg max par palette ·
+          } @else {
+            {{ capacite(l) }} par palette ·
+          }
+          {{ emplacementsLibres().length }} emplacement(s) disponible(s)
+        </small>
+      </label>
+
+      <label class="champ-motif">
+        <span>Motif du changement <b class="obligatoire">*</b></span>
+        <select name="motif" [(ngModel)]="motifChangement.motif" (ngModelChange)="erreurAffectation.set('')">
+          <option value="" disabled>Choisir un motif…</option>
+          @for (m of motifsDeplacement; track m.valeur) {
+            <option [value]="m.valeur">{{ m.libelle }}</option>
+          }
+        </select>
+      </label>
+      <label class="champ-motif">
+        <span>Commentaire <small>{{ motifChangement.motif === 'autre' ? '(obligatoire)' : '(facultatif)' }}</small></span>
+        <textarea name="commentaire-motif" rows="2" maxlength="255" [(ngModel)]="motifChangement.commentaire" placeholder="ex. lisse du niveau 0 abîmée"></textarea>
+        <small>Le changement est enregistré dans l'historique des emplacements.</small>
+      </label>
+
+      <div class="modale-pied">
+        @if (l.emplacement) {
+          <button type="button" class="btn btn-secondaire retirer" (click)="affecter(null)" [disabled]="enregistrement()">
+            Retirer
+          </button>
+        }
+        <button type="button" class="btn btn-secondaire" (click)="aAffecter.set(null)">Annuler</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrement() || !codeSaisi().trim()">
+          {{ enregistrement() ? 'Enregistrement…' : 'Valider' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}
+
+<!-- Export vers la production : quantité saisie, lots et emplacements imposés par le FIFO -->
+@if (aExporter(); as r) {
+  <div class="fond" (click)="aExporter.set(null)">
+    <form class="modale modale-export" [class.large]="sansFifo()" (click)="$event.stopPropagation()" (ngSubmit)="sansFifo() ? confirmerSansFifo() : confirmerExport()" novalidate>
+      <div class="modale-entete">
+        <h2>{{ sansFifo() ? 'Exporter sans FIFO' : 'Exporter vers la production' }}</h2>
+        <button type="button" class="icone-btn" (click)="aExporter.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      <p class="palette-info" [attr.data-type]="r.type">
+        <span class="code ref">{{ r.reference }}</span> · <span class="badge-type">{{ libelle(r) }}</span> ·
+        {{ nombre(r.disponible) }} en stock
+      </p>
+
+      @if (estAdministrateur()) {
+        <div class="bascule-fifo" role="radiogroup" aria-label="Mode de sortie">
+          <button type="button" role="radio" [attr.aria-checked]="!sansFifo()" [class.actif]="!sansFifo()" (click)="basculerSansFifo(false)">FIFO proposé</button>
+          <button type="button" role="radio" [attr.aria-checked]="sansFifo()" [class.actif]="sansFifo()" (click)="basculerSansFifo(true)">Sans FIFO (je choisis)</button>
+        </div>
+      }
+
+      <div class="champs-export">
+        @if (sansFifo()) {
+          <div class="total-libre">
+            Quantité à sortir
+            <strong>{{ nombre(totalLibre()) }}</strong>
+          </div>
+        } @else {
+        <label>
+          Quantité à sortir
+          <input
+            name="quantite"
+            type="number"
+            min="1"
+            [max]="r.disponible"
+            step="1"
+            placeholder="ex. 3"
+            autocomplete="off"
+            [ngModel]="quantiteExport()"
+            (ngModelChange)="changerQuantiteExport($event)"
+          />
+        </label>
+        }
+        <div class="champ-destination">
+          <span>Destination <b class="obligatoire">*</b></span>
+          <div class="choix-destination" role="radiogroup" aria-label="Destination">
+            @for (d of destinations; track d) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="destinationExport() === d"
+                [class.actif]="destinationExport() === d"
+                (click)="destinationExport.set(d); erreurExport.set('')"
+              >
+                {{ d }}
+              </button>
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="regle-mobile">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 1H7c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-2-2-2zm0 18H7V5h10v14z" /></svg>
+        <div>
+          <b>Les sorties se font sur l'application mobile (Export).</b>
+          <span>Le magasinier scanne chaque emplacement et chaque ticket : FIFO et produit contrôlés. Les produits déjà réservés par une sortie en cours sur le mobile sont exclus ci-dessous.</span>
+        </div>
+      </div>
+
+      @if (estAdmin()) {
+        <label class="motif-secours">
+          Sortie de secours sans contrôle mobile — motif @if (estAdministrateur()) { <small>(facultatif pour l'administrateur)</small> } @else { <b class="obligatoire">*</b> }
+          <textarea name="motifSecours" rows="2" maxlength="255" placeholder="ex. téléphone en panne, urgence production…" [(ngModel)]="motifSecours"></textarea>
+          <small>La sortie sera enregistrée « secours web » avec ce motif et votre nom.</small>
+        </label>
+      }
+
+      @if (erreurExport()) {
+        <p class="erreur">{{ erreurExport() }}</p>
+      }
+
+      @if (sansFifo()) {
+        <p class="consigne-fifo">Lots disponibles, dans l'ordre du FIFO (le 1er est celui que le FIFO proposerait). Indiquez la quantité à prendre sur chacun :</p>
+        @if (lotsLibres().length) {
+          <table class="table-prelevements">
+            <thead>
+              <tr>
+                <th>FIFO</th>
+                <th>Emplacement</th>
+                <th>Lot</th>
+                <th>Date de réception</th>
+                <th class="droite">Disponible</th>
+                <th class="droite">À sortir</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (l of lotsLibres(); track $index; let i = $index) {
+                <tr [class.choisi]="quantitesLibres()[i] > 0">
+                  <td class="rang">{{ i + 1 }}</td>
+                  <td>
+                    @if (l.emplacement) {
+                      <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)" [attr.title]="'Code application : ' + l.emplacement">{{ nom(l.emplacement) }}</span>
+                    } @else {
+                      <span class="non-range">Non rangé</span>
+                    }
+                  </td>
+                  <td class="code">{{ l.lot }}</td>
+                  <td class="date">{{ l.date_reception | date: 'dd/MM/yyyy HH:mm' }}</td>
+                  <td class="droite">
+                    <button type="button" class="lien-tout" (click)="toutLeLot(i)" title="Tout le lot / rien">{{ nombre(l.quantite) }}</button>
+                  </td>
+                  <td class="droite">
+                    <input
+                      class="qte-libre"
+                      type="number"
+                      min="0"
+                      [max]="l.quantite"
+                      step="1"
+                      [name]="'libre' + i"
+                      [ngModel]="quantitesLibres()[i]"
+                      (ngModelChange)="changerQuantiteLibre(i, $event)"
+                    />
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        } @else if (!erreurExport()) {
+          <p class="consigne-fifo">Chargement des lots…</p>
+        }
+      } @else if (apercu(); as a) {
+        <p class="consigne-fifo">À prendre dans cet ordre (FIFO : plus petit lot, puis réception la plus ancienne) :</p>
+        <table class="table-prelevements">
+          <thead>
+            <tr>
+              <th>Emplacement</th>
+              <th>Lot</th>
+              <th>Date de réception</th>
+              <th class="droite">Quantité</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (p of a.prelevements; track $index) {
+              <tr>
+                <td>
+                  @if (p.emplacement) {
+                    <span class="etiquette-empl lecture" [class.tampon]="estTampon(p.emplacement)" [attr.title]="'Code application : ' + p.emplacement">{{ nom(p.emplacement) }}</span>
+                    @if (p.place_liberee) {
+                      <small class="liberee">place libérée</small>
+                    }
+                    @if (estNiveau4(p.emplacement)) {
+                      <small class="elevateur">élévateur</small>
+                    }
+                  } @else {
+                    <span class="non-range">Non rangé</span>
+                  }
+                </td>
+                <td class="code">{{ p.lot }}</td>
+                <td class="date">{{ p.date_reception | date: 'dd/MM/yyyy HH:mm' }}</td>
+                <td class="droite"><strong>{{ nombre(p.quantite) }}</strong></td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aExporter.set(null)">{{ estAdmin() ? 'Annuler' : 'Fermer' }}</button>
+        @if (sansFifo()) {
+          <button type="submit" class="btn btn-principal" [disabled]="exportEnCours() || !totalLibre() || !destinationExport()">
+            {{ exportEnCours() ? 'Sortie…' : 'Confirmer la sortie sans FIFO (' + nombre(totalLibre()) + ')' }}
+          </button>
+        } @else if (estAdmin()) {
+          <button type="submit" class="btn btn-principal" [disabled]="exportEnCours() || !apercu() || !destinationExport() || (motifSecours.trim().length < 3 && !(estAdministrateur() && !motifSecours.trim()))">
+            {{ exportEnCours() ? 'Sortie…' : 'Confirmer la sortie de secours' }}
+          </button>
+        }
+      </div>
+    </form>
+  </div>
+}
+
+<!-- Synchronisation : résultat du contrôle stock / base -->
+@if (panneauVerification() && verification(); as v) {
+  <div class="fond" (click)="panneauVerification.set(false)">
+    <div class="modale modale-verif" (click)="$event.stopPropagation()" role="dialog" aria-label="Synchronisation du stock">
+      <div class="verif-bandeau" [attr.data-statut]="v.statut">
+        <span class="verif-icone">
+          @switch (v.statut) {
+            @case ('ok') {
+              <svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+            }
+            @case ('alerte') {
+              <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" /></svg>
+            }
+            @default {
+              <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+            }
+          }
+        </span>
+        <div>
+          <h2>{{ titresStatut[v.statut] }}</h2>
+          <p>{{ textesStatut[v.statut] }}</p>
+          <small>Vérifié le {{ v.date | date: 'dd/MM/yyyy à HH:mm:ss' }}</small>
+        </div>
+        <button type="button" class="icone-btn fermer-verif" (click)="panneauVerification.set(false)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      <div class="verif-chiffres">
+        <div><strong>{{ v.resume.produits }}</strong><span>produits en stock</span></div>
+        <div><strong>{{ v.resume.references }}</strong><span>références</span></div>
+        <div><strong>{{ v.resume.palettes }}</strong><span>palettes occupées</span></div>
+        <div [attr.data-statut]="v.resume.erreurs ? 'erreur' : 'ok'"><strong>{{ v.resume.erreurs }}</strong><span>écart(s)</span></div>
+      </div>
+
+      <ul class="verif-liste">
+        @for (c of v.controles; track c.cle) {
+          <li [attr.data-statut]="c.statut" [class.ouvert]="detailsOuverts() === c.cle">
+            <button type="button" class="verif-ligne" [disabled]="!c.details.length" (click)="basculerDetails(c.cle)">
+              <span class="pastille-verif">
+                @switch (c.statut) {
+                  @case ('ok') {
+                    <svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                  }
+                  @case ('alerte') {
+                    <svg viewBox="0 0 24 24"><path d="M11 7h2v6h-2zm0 8h2v2h-2z" /></svg>
+                  }
+                  @default {
+                    <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                  }
+                }
+              </span>
+              <span class="verif-texte">
+                <strong>{{ c.titre }}</strong>
+                <small>{{ c.message }}</small>
+              </span>
+              @if (c.details.length) {
+                <span class="verif-nb">{{ c.total_details }}</span>
+                <svg class="chevron-verif" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z" /></svg>
+              }
+            </button>
+            @if (detailsOuverts() === c.cle) {
+              <ul class="verif-details">
+                @for (d of c.details; track $index) {
+                  <li>{{ d }}</li>
+                }
+                @if (c.total_details > c.details.length) {
+                  <li class="plus">… et {{ c.total_details - c.details.length }} autre(s)</li>
+                }
+              </ul>
+            }
+          </li>
+        }
+      </ul>
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="panneauVerification.set(false)">Fermer</button>
+        <button type="button" class="btn btn-principal" [disabled]="verificationEnCours()" (click)="synchroniser()">
+          {{ verificationEnCours() ? 'Vérification…' : 'Vérifier à nouveau' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

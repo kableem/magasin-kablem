@@ -1,0 +1,158 @@
+/*
+ * App Global CSS
+ * ----------------------------------------------------------------------------
+ * Put style rules here that you want to apply globally. These styles are for
+ * the entire app and not just one component. Additionally, this file can be
+ * used as an entry point to import other CSS/Sass files to be included in the
+ * output CSS.
+ * For more information on global stylesheets, visit the documentation:
+ * https://ionicframework.com/docs/layout/global-stylesheets
+ */
+
+/* Core CSS required for Ionic components to work properly */
+@import "@ionic/angular/css/core.css";
+
+/* Basic CSS for apps built with Ionic */
+@import "@ionic/angular/css/normalize.css";
+@import "@ionic/angular/css/structure.css";
+@import "@ionic/angular/css/typography.css";
+@import "@ionic/angular/css/display.css";
+
+/* Optional CSS utils that can be commented out */
+@import "@ionic/angular/css/padding.css";
+@import "@ionic/angular/css/float-elements.css";
+@import "@ionic/angular/css/text-alignment.css";
+@import "@ionic/angular/css/text-transformation.css";
+@import "@ionic/angular/css/flex-utils.css";
+
+/**
+ * Ionic Dark Mode
+ * -----------------------------------------------------
+ * For more info, please see:
+ * https://ionicframework.com/docs/theming/dark-mode
+ */
+
+/* @import "@ionic/angular/css/palettes/dark.always.css"; */
+/* @import "@ionic/angular/css/palettes/dark.class.css"; */
+/* Thème clair uniquement : meilleure lisibilité en magasin (pas de mode sombre automatique) */
+
+/* ========================================================================
+ * Système de design Magasin Kab-lem (mobile)
+ * Pensé pour le magasin : une main, gants, forte lumière, lecture à distance.
+ * Cibles tactiles >= 56 px, contrastes forts, actions principales en bas d'écran.
+ * ======================================================================== */
+@import '@fontsource/titillium-web/400.css';
+@import '@fontsource/titillium-web/600.css';
+@import '@fontsource/titillium-web/700.css';
+
+html { color-scheme: light; }
+body { font-family: var(--ion-font-family); -webkit-font-smoothing: antialiased; }
+ion-content { --background: var(--k-fond); }
+.mono { font-family: 'Consolas', 'SFMono-Regular', 'Roboto Mono', monospace; letter-spacing: 0.02em; }
+
+/* ---------- Boutons ---------- */
+ion-button {
+  --border-radius: 16px;
+  --box-shadow: none;
+  min-height: 56px;
+  margin: 0;
+  font-weight: 700;
+  font-size: 17px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+ion-button[size='small'] { min-height: 40px; font-size: 15px; }
+.k-btn-principal { --background: var(--k-degrade-nuit); --background-activated: var(--k-nuit); --box-shadow: var(--k-ombre-forte); }
+.k-btn-rouge { --background: var(--k-degrade-rouge); --background-activated: var(--k-rouge-fonce); --box-shadow: 0 16px 30px -18px rgba(224, 34, 34, 0.8); }
+.k-btn-clair { --background: var(--k-surface); --color: var(--k-marine); --border-color: var(--k-bord); --border-width: 1.5px; --border-style: solid; }
+
+/* ---------- Champs ---------- */
+.k-champ {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 0 6px 0 16px;
+  background: var(--k-surface);
+  border: 2px solid var(--k-bord);
+  border-radius: 16px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.k-champ:focus-within { border-color: var(--k-marine); box-shadow: 0 0 0 4px rgba(19, 41, 107, 0.12); }
+.k-champ > ion-icon { flex: none; font-size: 22px; color: var(--k-gris); }
+.k-champ ion-input { --padding-start: 0; --padding-end: 0; --highlight-color: transparent; font-size: 18px; font-weight: 600; }
+.k-libelle { display: block; margin: 18px 2px 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--k-gris); }
+
+/* ---------- Cartes ---------- */
+.k-carte { background: var(--k-surface); border: 1px solid var(--k-bord); border-radius: var(--k-rayon); box-shadow: var(--k-ombre); }
+
+/* ---------- Étiquette d'emplacement (comme sur les rayonnages) ---------- */
+.k-etiquette {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 12px;
+  font-family: 'Consolas', 'SFMono-Regular', 'Roboto Mono', monospace;
+  font-weight: 800;
+  color: #111;
+  background: var(--k-jaune);
+  border-left: 6px solid #111;
+  border-radius: 6px;
+  letter-spacing: 0.04em;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+.k-etiquette.vide { color: var(--k-gris); background: var(--k-surface-2); border-left-color: var(--k-bord); font-family: inherit; font-weight: 700; font-style: italic; }
+
+/* ---------- Pastilles ---------- */
+.k-pastille { display: inline-flex; align-items: center; gap: 5px; padding: 3px 11px; font-size: 13px; font-weight: 700; border-radius: 999px; background: var(--k-surface-2); color: var(--k-marine); }
+.k-pastille.bobine { color: #b81818; background: #fde8e8; }
+.k-pastille.cosse { color: #0c71c3; background: #e5f1fb; }
+.k-pastille.connecteur { color: #138a4b; background: #e2f6ea; }
+
+/* ---------- Titres de section ---------- */
+.k-section { display: flex; align-items: center; justify-content: space-between; margin: 26px 4px 10px; }
+.k-section h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--k-gris); }
+
+/* ---------- Bas d'écran (zone du pouce) ---------- */
+ion-footer.k-pied { box-shadow: 0 -10px 30px -20px rgba(6, 22, 58, 0.4); }
+ion-footer.k-pied ion-toolbar { --background: var(--k-surface); --border-width: 0; --padding-top: 12px; --padding-bottom: calc(12px + var(--ion-safe-area-bottom, 0px)); --padding-start: 16px; --padding-end: 16px; }
+
+/* ---------- Animations ---------- */
+@keyframes k-apparait { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+.k-apparait { animation: k-apparait 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+/* ---------- Étapes d'un scan en deux temps (emplacement puis produit) ---------- */
+.k-etapes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0 0 14px; }
+.k-etape { position: relative; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 8px 10px; background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; color: var(--k-gris); }
+.k-etape .rond { display: grid; place-items: center; width: 34px; height: 34px; flex: none; font-weight: 900; color: var(--k-gris); background: var(--k-surface-2); border-radius: 50%; font-size: 16px; }
+.k-etape .rond ion-icon { font-size: 20px; }
+.k-etape span.txt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.k-etape small { font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.k-etape b { font-size: 17px; color: var(--k-nuit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-etape.courante { border-color: var(--k-rouge); box-shadow: 0 0 0 4px rgba(224, 34, 34, 0.12); color: var(--k-nuit); }
+.k-etape.courante .rond { color: #fff; background: var(--k-rouge); }
+.k-etape.faite { border-color: #bfe6cf; background: #f3fbf6; color: var(--k-nuit); }
+.k-etape.faite .rond { color: #fff; background: var(--k-vert); }
+.k-etape .effacer { margin-left: auto; display: grid; place-items: center; width: 36px; height: 36px; flex: none; font-size: 20px; color: var(--k-gris); background: var(--k-surface-2); border: 0; border-radius: 50%; }
+
+/* ---------- Envoi en cours ---------- */
+.k-envoi { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 14px 0 0; font-weight: 600; color: var(--k-gris); }
+
+/* ---------- Scan gardé sans réseau ---------- */
+.k-attente { display: flex; gap: 14px; padding: 18px; background: var(--k-surface); border: 2px dashed #b9c1d6; border-radius: 24px; }
+.k-attente > ion-icon { flex: none; font-size: 36px; color: var(--k-marine); }
+.k-attente h2 { margin: 0 0 4px; font-size: 20px; font-weight: 900; color: var(--k-nuit); }
+.k-attente p { margin: 0; line-height: 1.45; color: var(--k-gris); }
+
+/* ---------- Compteur de session ---------- */
+.k-compteur { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 12px; font-size: 14px; color: var(--k-gris); }
+.k-compteur b { color: var(--k-nuit); }
+.k-compteur .points { display: flex; gap: 4px; }
+.k-compteur .points i { width: 10px; height: 10px; border-radius: 50%; background: var(--k-vert); }
+.k-compteur .points i.orange { background: var(--k-orange); }
+.k-compteur .points i.rouge { background: var(--k-erreur); }
+
+/* Numéros des colis (même référence, même lot : chaque colis a son numéro) */
+.numeros { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-left: 6px; font-size: 12px; color: var(--k-gris); }
+.numeros i { min-width: 22px; padding: 0 5px; font-style: normal; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; color: var(--k-marine); background: #e5f1fb; border-radius: 6px; }

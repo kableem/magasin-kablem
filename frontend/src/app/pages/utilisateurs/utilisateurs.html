@@ -1,0 +1,210 @@
+<div class="page-entete">
+  <div>
+    <h1>Utilisateurs</h1>
+    <p>Créez les comptes (administrateurs, chefs de magasin, magasiniers) et gérez leurs accès.</p>
+  </div>
+  <button type="button" class="btn btn-principal" (click)="ouvrirAjout()">
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+    Nouvel utilisateur
+  </button>
+</div>
+
+<div class="stats">
+  <div class="stat"><span>Total</span><strong>{{ stats().total }}</strong></div>
+  <div class="stat stat-rouge"><span>Administrateurs</span><strong>{{ stats().admins }}</strong></div>
+  <div class="stat stat-orange"><span>Chefs de magasin</span><strong>{{ stats().chefs }}</strong></div>
+  <div class="stat stat-bleu"><span>Magasiniers</span><strong>{{ stats().magasiniers }}</strong></div>
+  <div class="stat stat-violet"><span>Planificateurs</span><strong>{{ stats().planificateurs }}</strong></div>
+  <div class="stat stat-gris"><span>Inactifs</span><strong>{{ stats().inactifs }}</strong></div>
+</div>
+
+<section class="carte">
+  <div class="outils">
+    <label class="recherche">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+      <input
+        placeholder="Rechercher par nom ou matricule…"
+        [ngModel]="recherche()"
+        (ngModelChange)="recherche.set($event)"
+      />
+    </label>
+    <select [ngModel]="filtreRole()" (ngModelChange)="filtreRole.set($event)">
+      <option value="">Tous les rôles</option>
+      @for (r of roles; track r) {
+        <option [value]="r">{{ libellesRoles[r] }}</option>
+      }
+    </select>
+  </div>
+
+  @if (erreur()) {
+    <p class="erreur">{{ erreur() }}</p>
+  }
+
+  <div class="table-defilante">
+    <table>
+      <thead>
+        <tr>
+          <th>Utilisateur</th>
+          <th>Matricule</th>
+          <th>Rôle</th>
+          <th>Statut</th>
+          <th>Dernière connexion</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (u of filtres(); track u.id) {
+          <tr [class.inactif]="!u.actif">
+            <td>
+              <div class="personne">
+                <span class="avatar" [attr.data-role]="u.role">{{ u.prenom[0] }}{{ u.nom[0] }}</span>
+                <span>
+                  <strong>{{ u.prenom }} {{ u.nom }}</strong>
+                  @if (u.id === moi()) {
+                    <small class="vous">Vous</small>
+                  }
+                </span>
+              </div>
+            </td>
+            <td class="matricule">{{ u.matricule }}</td>
+            <td><span class="badge" [attr.data-role]="u.role">{{ libellesRoles[u.role] }}</span></td>
+            <td>
+              <button
+                type="button"
+                class="statut"
+                [class.on]="u.actif"
+                [disabled]="u.id === moi()"
+                (click)="basculerActif(u)"
+                [attr.title]="u.actif ? 'Désactiver le compte' : 'Activer le compte'"
+              >
+                <span class="interrupteur"></span>
+                {{ u.actif ? 'Actif' : 'Inactif' }}
+              </button>
+            </td>
+            <td class="date">
+              {{ u.derniere_connexion ? (u.derniere_connexion | date: 'dd/MM/yyyy HH:mm') : 'Jamais' }}
+            </td>
+            <td class="actions">
+              <button type="button" class="icone-btn" title="Modifier" (click)="ouvrirModification(u)">
+                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+              </button>
+              <button
+                type="button"
+                class="icone-btn danger"
+                title="Supprimer"
+                [disabled]="u.id === moi()"
+                (click)="aSupprimer.set(u)"
+              >
+                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
+              </button>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="6" class="vide">
+              {{ chargement() ? 'Chargement…' : 'Aucun utilisateur trouvé' }}
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Fenêtre ajout / modification -->
+@if (formOuvert()) {
+  <div class="fond" (click)="fermerForm()">
+    <form class="modale" (click)="$event.stopPropagation()" (ngSubmit)="enregistrer()" novalidate>
+      <div class="modale-entete">
+        <h2>{{ editionId() ? 'Modifier le compte' : 'Nouveau compte' }}</h2>
+        <button type="button" class="icone-btn" (click)="fermerForm()" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      @if (erreurForm()) {
+        <p class="erreur">{{ erreurForm() }}</p>
+      }
+
+      <div class="grille">
+        <label>
+          Prénom
+          <input name="prenom" [(ngModel)]="form.prenom" autocomplete="off" />
+        </label>
+        <label>
+          Nom
+          <input name="nom" [(ngModel)]="form.nom" autocomplete="off" />
+        </label>
+        <label>
+          Matricule (chiffres uniquement, identifiant de connexion)
+          <input
+            name="matricule"
+            [ngModel]="form.matricule"
+            (ngModelChange)="form.matricule = $event"
+            (input)="chiffresSeulement($event)"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="20"
+            placeholder="ex. 10245"
+            autocomplete="off"
+          />
+        </label>
+        <label>
+          Rôle
+          <select name="role" [(ngModel)]="form.role">
+            @for (r of roles; track r) {
+              <option [value]="r">{{ libellesRoles[r] }}</option>
+            }
+          </select>
+        </label>
+        <label class="pleine">
+          {{ editionId() ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe' }}
+          <span class="mdp">
+            <input
+              name="motDePasse"
+              [type]="afficherMdp() ? 'text' : 'password'"
+              [(ngModel)]="form.motDePasse"
+              autocomplete="new-password"
+            />
+            <button type="button" class="lien-btn" (click)="afficherMdp.set(!afficherMdp())">
+              {{ afficherMdp() ? 'Masquer' : 'Afficher' }}
+            </button>
+            <button type="button" class="lien-btn" (click)="genererMotDePasse()">Générer</button>
+          </span>
+        </label>
+        <label class="case pleine">
+          <input type="checkbox" name="actif" [(ngModel)]="form.actif" />
+          Compte actif (l'utilisateur peut se connecter)
+        </label>
+      </div>
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="fermerForm()">Annuler</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrement()">
+          {{ enregistrement() ? 'Enregistrement…' : editionId() ? 'Enregistrer' : 'Créer le compte' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}
+
+<!-- Confirmation de suppression -->
+@if (aSupprimer(); as u) {
+  <div class="fond" (click)="aSupprimer.set(null)">
+    <div class="modale petite" (click)="$event.stopPropagation()">
+      <div class="alerte-icone">
+        <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
+      </div>
+      <h2>Supprimer ce compte ?</h2>
+      <p>
+        Le compte de <strong>{{ u.prenom }} {{ u.nom }}</strong> ({{ u.matricule }}) sera supprimé
+        définitivement. Pour bloquer l'accès sans supprimer, désactivez-le plutôt.
+      </p>
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aSupprimer.set(null)">Annuler</button>
+        <button type="button" class="btn btn-danger" (click)="confirmerSuppression()">Supprimer</button>
+      </div>
+    </div>
+  </div>
+}
+

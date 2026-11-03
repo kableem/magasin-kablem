@@ -1,0 +1,191 @@
+<section class="ranger">
+  <header class="tete">
+    <div class="titre">
+      <span class="pastille" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z" /></svg>
+      </span>
+      <div>
+        <h2>Ranger le magasin</h2>
+        <p>
+          Les magasiniers rangent librement avec le mobile : <b>ticket du produit</b> → <b>emplacement de départ</b> → <b>emplacement d'arrivée</b>.
+          L'application ne propose rien : elle <b>contrôle</b> chaque déplacement (niveau, taille, place restante, colis au bon endroit)
+          et l'<b>enregistre</b> avec le matricule.
+        </p>
+      </div>
+    </div>
+    <div class="exports">
+      <button type="button" class="btn-fichier excel" [disabled]="telechargement() !== null || !suivi()?.mouvements?.length" (click)="telecharger('excel')" title="Télécharger les déplacements en Excel">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-2.6 14h-2.1L12 13.3 9.7 17H7.6l3.3-5-3.1-5h2.1l2.1 3.6L14.1 7h2.1l-3.1 5 3.3 5z" /></svg>
+        {{ telechargement() === 'excel' ? 'Téléchargement…' : 'Excel' }}
+      </button>
+      <button type="button" class="btn-fichier pdf" [disabled]="telechargement() !== null || !suivi()?.mouvements?.length" (click)="telecharger('pdf')" title="Télécharger les déplacements en PDF">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z" /></svg>
+        {{ telechargement() === 'pdf' ? 'Téléchargement…' : 'PDF' }}
+      </button>
+    </div>
+  </header>
+
+  <!-- Période et filtres -->
+  <div class="barre-filtres">
+    <div class="periodes" role="group" aria-label="Période">
+      @for (p of periodes; track p.valeur) {
+        <button type="button" [class.actif]="periode() === p.valeur" (click)="choisirPeriode(p.valeur)">{{ p.libelle }}</button>
+      }
+      <span class="dates" [class.actif]="periode() === 'dates'">
+        <input type="date" name="du" [(ngModel)]="du" (change)="changerDates()" aria-label="Du" />
+        <span>→</span>
+        <input type="date" name="au" [(ngModel)]="au" (change)="changerDates()" aria-label="Au" />
+      </span>
+    </div>
+    <form class="filtres" (ngSubmit)="charger()">
+      <select name="par" [(ngModel)]="par" (change)="charger()" aria-label="Magasinier">
+        <option value="">Tous les magasiniers</option>
+        @for (u of suivi()?.utilisateurs ?? []; track u.matricule) {
+          <option [value]="u.matricule">{{ u.matricule }} · {{ nomComplet(u) }}</option>
+        }
+      </select>
+      <input name="reference" placeholder="Référence" [(ngModel)]="reference" autocomplete="off" />
+      <input name="emplacement" placeholder="Emplacement" [(ngModel)]="emplacement" autocomplete="off" />
+      <button type="submit" class="btn btn-secondaire">Rechercher</button>
+      @if (par || reference || emplacement) {
+        <button type="button" class="effacer" (click)="effacer()">Effacer</button>
+      }
+    </form>
+  </div>
+
+  @if (erreur()) {
+    <p class="erreur">{{ erreur() }}</p>
+  }
+
+  @if (suivi(); as s) {
+    <!-- Chiffres de la période -->
+    <div class="chiffres" [class.charge]="chargement()">
+      <div class="chiffre nuit"><span>Déplacements</span><strong>{{ nombre(s.resume.deplacements) }}</strong><small>scannés et contrôlés</small></div>
+      <div class="chiffre"><span>Produits déplacés</span><strong>{{ nombre(s.resume.produits) }}</strong><small>bobines, cosses, cartons</small></div>
+      <div class="chiffre vert"><span>Emplacements libérés</span><strong>{{ nombre(s.resume.liberes) }}</strong><small>places rendues vides</small></div>
+      <div class="chiffre rouge"><span>Refusés</span><strong>{{ nombre(s.resume.refus) }}</strong><small>par les contrôles</small></div>
+      <div class="chiffre"><span>Magasiniers</span><strong>{{ s.resume.personnes }}</strong><small>ont rangé</small></div>
+    </div>
+
+    <div class="deux">
+      <!-- Travail de chaque personne -->
+      <section class="carte bloc">
+        <h3>Par magasinier <small>cliquez pour filtrer</small></h3>
+        @if (s.par_personne.length) {
+          <ul class="personnes">
+            @for (p of s.par_personne; track p.utilisateur_id) {
+              <li>
+                <button type="button" [class.choisi]="par === p.matricule" (click)="filtrerPersonne(p)">
+                  <span class="avatar">{{ initiales(p) }}</span>
+                  <span class="qui">
+                    <b>{{ nomComplet(p) }}</b>
+                    <small><span class="matricule">{{ p.matricule }}</span>{{ p.role ? ' · ' + (roles[p.role] ?? p.role) : '' }}{{ p.dernier ? ' · dernier ' + (p.dernier | date: 'dd/MM HH:mm') : '' }}</small>
+                    <span class="jauge"><i [style.width.%]="(100 * p.deplacements) / maxDeplacements()"></i></span>
+                  </span>
+                  <span class="nombres">
+                    <span title="Déplacements"><b>{{ p.deplacements }}</b>dépl.</span>
+                    <span class="vert" title="Emplacements libérés"><b>{{ p.liberes }}</b>libérés</span>
+                    <span [class.rouge]="p.refus > 0" title="Refusés par les contrôles"><b>{{ p.refus }}</b>refus</span>
+                  </span>
+                </button>
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="vide">Personne n'a rangé sur cette période.</p>
+        }
+      </section>
+
+      <!-- Déplacements refusés : le contrôle a joué -->
+      <section class="carte bloc">
+        <h3>Refusés par les contrôles <small>rien n'a bougé</small></h3>
+        @if (s.refus.length) {
+          <ul class="refus">
+            @for (r of s.refus; track r.id) {
+              <li>
+                <span class="heure">{{ r.date | date: 'dd/MM HH:mm' }}</span>
+                <span class="texte">
+                  <span class="ligne">
+                    <b class="mono">{{ r.reference ?? '—' }}</b>
+                    @if (r.depuis || r.vers) {
+                      <span class="trajet petit">
+                        <span class="etiq">{{ r.depuis ?? '?' }}</span>→<span class="etiq">{{ r.vers ?? '?' }}</span>
+                      </span>
+                    }
+                    <span class="matricule">{{ r.matricule }}</span>
+                  </span>
+                  <small>{{ r.message }}</small>
+                </span>
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="vide ok">Aucun déplacement refusé.</p>
+        }
+      </section>
+    </div>
+
+    <!-- Chaque déplacement : qui, quand, quoi, d'où, vers où -->
+    <section class="carte bloc">
+      <h3>Déplacements <small>{{ s.mouvements.length >= 500 ? '500 derniers · les fichiers contiennent tout' : s.mouvements.length + ' ligne(s)' }}</small></h3>
+      <div class="table-defilante">
+        <table>
+          <thead>
+            <tr>
+              <th>Heure</th>
+              <th>Magasinier</th>
+              <th>Produit</th>
+              <th class="centre">Qté</th>
+              <th>Départ → arrivée</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (j of parJour(); track j.cle) {
+              <tr class="jour">
+                <td colspan="5">
+                  <span>{{ j.titre }}</span>
+                  <small>{{ j.mouvements.length }} déplacement{{ j.mouvements.length > 1 ? 's' : '' }}{{ j.liberes ? ' · ' + j.liberes + ' emplacement' + (j.liberes > 1 ? 's' : '') + ' libéré' + (j.liberes > 1 ? 's' : '') : '' }}</small>
+                </td>
+              </tr>
+              @for (m of j.mouvements; track m.id) {
+                <tr>
+                  <td class="heure">{{ m.date | date: 'HH:mm' }}</td>
+                  <td>
+                    <span class="qui-ligne">
+                      <span class="avatar petit">{{ initiales(m) }}</span>
+                      <span><b class="matricule">{{ m.matricule ?? '—' }}</b><small>{{ nomComplet(m) }}</small></span>
+                    </span>
+                  </td>
+                  <td>
+                    <span class="produit">
+                      <b class="mono">{{ m.reference }}</b>
+                      <span class="type" [attr.data-type]="m.type">{{ libelleProduit(m) }}</span>
+                    </span>
+                    <small class="sous">lot {{ m.lot }}{{ m.colis ? ' · colis ' + m.colis : '' }}{{ m.commentaire ? ' · ' + m.commentaire : '' }}</small>
+                  </td>
+                  <td class="centre"><span class="qte">{{ m.quantite }}</span></td>
+                  <td>
+                    <span class="trajet">
+                      <span class="etiq" [class.libere]="m.depuis_liberee">{{ m.depuis }}</span>
+                      <svg viewBox="0 0 24 24" aria-label="vers"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>
+                      <span class="etiq arrivee">{{ m.vers }}</span>
+                      @if (m.depuis_liberee) {
+                        <span class="badge-libere">{{ m.depuis }} libéré</span>
+                      }
+                    </span>
+                  </td>
+                </tr>
+              }
+            } @empty {
+              <tr>
+                <td colspan="5" class="vide">{{ chargement() ? 'Chargement…' : 'Aucun déplacement sur cette période.' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  } @else if (chargement()) {
+    <p class="vide">Chargement…</p>
+  }
+</section>

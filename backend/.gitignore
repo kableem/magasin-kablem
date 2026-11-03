@@ -1,0 +1,6 @@
+node_modules
+.env
+
+
+# Sauvegardes de la base faites par les scripts (données réelles : jamais publiées)
+scripts/sauvegardes/

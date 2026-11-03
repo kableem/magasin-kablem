@@ -1,0 +1,650 @@
+<div class="page-entete">
+  <div>
+    <h1 class="titre">
+      <span class="pastille">
+        <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" /></svg>
+      </span>
+      Import
+    </h1>
+    <p>Les imports arrivent de la base de l'Italie. « Synchroniser » récupère les nouveaux. Après la réception mobile, chaque produit entre dans le stock quand le magasinier le range (scan du ticket puis de l'emplacement).</p>
+  </div>
+  <div class="synchro">
+    <div class="boutons-synchro">
+    @if (estAdministrateur()) {
+      <button type="button" class="btn btn-secondaire" (click)="saisieManuelle.set(true)">
+        <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+        Saisir un import
+      </button>
+    }
+    <button type="button" class="btn btn-principal" [disabled]="synchronisation()" (click)="synchroniser()">
+      <svg viewBox="0 0 24 24" [class.tourne]="synchronisation()"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" /></svg>
+      {{ synchronisation() ? 'Synchronisation…' : 'Synchroniser' }}
+      @if (disponibles() && !synchronisation()) {
+        <span class="badge-dispo">{{ disponibles() }}</span>
+      }
+    </button>
+    </div>
+    <small>
+      @if (derniereSynchro(); as d) {
+        Dernière synchronisation : {{ d | date: 'dd/MM/yyyy à HH:mm' }}
+      } @else {
+        Jamais synchronisé
+      }
+      · {{ disponibles() ? disponibles() + ' nouvel(s) import(s) disponible(s)' : 'à jour' }}
+    </small>
+  </div>
+</div>
+
+@if (saisieManuelle()) {
+  <app-import-manuel (fermer)="saisieManuelle.set(false)" (cree)="apresSaisieManuelle($event)"></app-import-manuel>
+}
+
+@if (ignores().length) {
+  <section class="carte imports-ignores">
+    <strong>Imports de l'Italie non récupérés (à corriger dans la base de l'Italie) :</strong>
+    <ul>
+      @for (x of ignores(); track x.numero) {
+        <li><span class="code">{{ x.numero }}</span> : {{ x.raison }}</li>
+      }
+    </ul>
+  </section>
+}
+
+<!-- Filtres -->
+<section class="carte barre">
+  <div class="onglets">
+    <button type="button" [class.actif]="filtreStatut() === ''" (click)="filtreStatut.set('')">
+      Tous <span>{{ compteurs().tous }}</span>
+    </button>
+    <button type="button" [class.actif]="filtreStatut() === 'en_attente'" (click)="filtreStatut.set('en_attente')">
+      En attente <span>{{ compteurs().en_attente }}</span>
+    </button>
+    <button type="button" [class.actif]="filtreStatut() === 'ajoute'" (click)="filtreStatut.set('ajoute')">
+      Validés <span>{{ compteurs().ajoute }}</span>
+    </button>
+  </div>
+  <span class="resultat">{{ filtres().length }} import(s) affiché(s)</span>
+
+  <!-- Recherche : tous les filtres se combinent -->
+  <div class="filtres">
+    <label>
+      Référence
+      <input placeholder="ex. F0411" [ngModel]="filtreReference()" (ngModelChange)="filtreReference.set($event)" autocomplete="off" />
+    </label>
+    <label>
+      Lot
+      <input placeholder="ex. 202613252" inputmode="numeric" [ngModel]="filtreLot()" (ngModelChange)="filtreLot.set($event)" autocomplete="off" />
+    </label>
+    <label>
+      Type de produit
+      <select [ngModel]="filtreType()" (ngModelChange)="filtreType.set($event)">
+        <option value="">Tous les types</option>
+        @for (t of types; track t.valeur) {
+          <option [value]="t.valeur">{{ t.libelle }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Import du
+      <input type="date" [max]="dateAu() || null" [ngModel]="dateDu()" (ngModelChange)="dateDu.set($event ?? '')" />
+    </label>
+    <label>
+      au
+      <input type="date" [min]="dateDu() || null" [ngModel]="dateAu()" (ngModelChange)="dateAu.set($event ?? '')" />
+    </label>
+    <button type="button" class="btn btn-secondaire effacer" [disabled]="!nbFiltresActifs()" (click)="effacerFiltres()">
+      <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+      Effacer
+    </button>
+  </div>
+</section>
+
+@if (erreurListe()) {
+  <p class="erreur">{{ erreurListe() }}</p>
+}
+
+<!-- Liste des imports, du plus récent au plus ancien -->
+@for (i of filtres(); track i.id) {
+  <article class="import" [attr.data-statut]="i.statut" [class.ouvert]="estOuvert(i)">
+    <button type="button" class="import-entete" (click)="basculer(i)">
+      <span class="date">
+        <strong>{{ i.date_creation | date: 'dd/MM/yyyy' }}</strong>
+        <small>{{ i.date_creation | date: 'HH:mm' }}</small>
+      </span>
+      @if (i.numero_livraison) {
+        <span class="livraison" [title]="i.date_envoi ? 'Envoyé par l\'Italie le ' + (i.date_envoi | date: 'dd/MM/yyyy HH:mm') : ''">
+          <small>Livraison</small>
+          <strong class="code">{{ i.numero_livraison }}</strong>
+        </span>
+      }
+
+      @if (i.statut === 'ajoute') {
+        <span class="statut statut-ajoute" [class.statut-range]="i.etape === 'range'">
+          <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z" /></svg>
+          {{ etapes[i.etape] }}
+        </span>
+        @if (i.ajout_force) {
+          <span class="statut statut-force" [title]="'Motif : ' + i.motif_force">Sans contrôle mobile</span>
+        }
+      } @else if (i.bloque_par) {
+        <span class="statut statut-verrouille" [title]="'Verrouillé : terminez d\'abord l\'import n° ' + i.bloque_par.id">
+          <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z" /></svg>
+          Verrouillé · {{ i.ordre_attente }}e
+        </span>
+      } @else {
+        <span class="statut statut-prochain">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+          À traiter maintenant
+        </span>
+      }
+
+      @if (i.statut === 'en_attente' && i.etape !== 'en_attente') {
+        <span class="statut statut-etape" [attr.data-etape]="i.etape"><svg viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z" /></svg>{{ etapes[i.etape] }}</span>
+      }
+      @if (i.statut === 'en_attente' && i.avancement && i.avancement.attendus) {
+        <span class="progression-reception" [title]="i.avancement.recus + ' produit(s) reçu(s) sur ' + i.avancement.attendus + ' (scans du mobile)'">
+          <span class="barre-reception"><i [style.width.%]="pourcentReception(i)"></i></span>
+          <small><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }} reçus</small>
+        </span>
+      }
+
+      <span class="resume">
+        @for (r of resume(i); track r.type) {
+          <span class="badge-type" [attr.data-type]="r.type">{{ r.texte }}</span>
+        } @empty {
+          <span class="vide-import">Aucun produit</span>
+        }
+      </span>
+
+      <span class="total-import">
+        <strong>{{ nombre(total(i)) }}</strong>
+        <small>{{ i.produits.length }} produit(s)</small>
+      </span>
+
+      <svg viewBox="0 0 24 24" class="chevron"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" /></svg>
+    </button>
+
+    @if (estOuvert(i)) {
+      <div class="import-corps">
+        <!-- Produits de l'import -->
+        @if (i.produits.length) {
+          <div class="table-defilante">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Référence</th>
+                  <th>Lot</th>
+                  <th class="droite">Quantité</th>
+                  <th class="droite" title="Scannés sur le mobile">Reçus</th>
+                  @if (i.statut === 'ajoute') {
+                    <th title="Emplacement imposé de chaque colis au rangement mobile">Emplacement par colis</th>
+                  }
+                  <th>Commentaire</th>
+                  @if (i.statut === 'en_attente') {
+                    <th></th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of i.produits; track p.id) {
+                  <tr [class.trouve]="filtreProduitActif() && correspond(p)">
+                    <td>
+                      <span class="badge-type" [attr.data-type]="p.type">{{ libelle(p) }}</span>
+                      @if (p.type === 'connecteur' && p.longueur) {
+                        <small class="mesures">Carton {{ mesures(p) }}</small>
+                      }
+                    </td>
+                    <td class="code ref">{{ p.reference }}</td>
+                    <td class="code">{{ p.lot }}</td>
+                    <td class="droite">
+                      <strong>{{ nombre(p.quantite) }}</strong>
+                      @if (p.reclamation; as rc) {
+                        <small class="qte-reclamee">− {{ nombre(rc.quantite) }} réclamé(s)</small>
+                      }
+                    </td>
+                    <td class="droite recus" [class.complet]="(p.recus ?? 0) >= quantiteRetenue(p) && quantiteRetenue(p) > 0" [class.vide-recus]="!p.recus">
+                      <strong>{{ p.recus ?? 0 }}</strong>/{{ quantiteRetenue(p) }}
+                      @if (p.colis_recus?.length) {
+                        <span class="numeros-colis" [title]="'Colis reçus : n° ' + p.colis_recus!.join(', ')">
+                          @for (n of p.colis_recus; track n) {
+                            <i [class.range]="p.colis_ranges?.includes(n)">{{ n }}</i>
+                          }
+                        </span>
+                      }
+                      @if (p.en_trop) {
+                        <small class="en-trop">+{{ p.en_trop }} en trop{{ p.colis_en_trop?.length ? ' (n° ' + p.colis_en_trop!.join(', ') + ')' : '' }}</small>
+                      }
+                      @if (i.statut === 'ajoute' && p.recus) {
+                        <small class="ranges">{{ p.ranges ?? 0 }} rangé(s)</small>
+                      }
+                    </td>
+                    @if (i.statut === 'ajoute') {
+                      <td class="affectations">
+                        @for (a of p.affectations ?? []; track a.id) {
+                          <button
+                            type="button"
+                            class="colis-empl"
+                            [class.range]="a.range"
+                            [disabled]="a.range || !estAdmin()"
+                            (click)="ouvrirChangementColis(p, a)"
+                            [title]="a.range ? 'Colis n° ' + a.colis + ' rangé en ' + a.emplacement + ' (au stock)' : estAdmin() ? 'Changer l\'emplacement du colis n° ' + a.colis : 'Colis n° ' + a.colis + ' à ranger en ' + a.emplacement"
+                          >
+                            <b>{{ a.palette ? 'P' + a.palette + ' · ' : '' }}n° {{ a.colis }}</b><span>{{ a.emplacement }}</span>
+                            @if (a.range) {
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                            }
+                          </button>
+                        } @empty {
+                          <span class="vide-affectation">—</span>
+                        }
+                      </td>
+                    }
+                    <td class="commentaire" [class.vide-commentaire]="!p.commentaire && !p.reclamation">
+                      @if (p.reclamation; as rc) {
+                        <span class="motif-reclamation" [attr.data-motif]="rc.motif">Réclamé · {{ libelleMotif(rc.motif) }}</span>
+                        @if (rc.commentaire) {
+                          <small class="commentaire-reclamation">{{ rc.commentaire }}</small>
+                        }
+                      }
+                      @if (p.commentaire) {
+                        <span>{{ p.commentaire }}</span>
+                      } @else if (!p.reclamation) {
+                        —
+                      }
+                    </td>
+                    @if (i.statut === 'en_attente') {
+                      <td class="droite actions-produit">
+                        <button
+                          type="button"
+                          class="lien-btn reclamer"
+                          [class.deja]="p.reclamation"
+                          (click)="ouvrirReclamation(i, p)"
+                          [title]="p.reclamation ? 'Modifier ou annuler la réclamation' : 'Réclamer ce produit (manquant, non conforme…)'"
+                        >
+                          {{ p.reclamation ? 'Réclamation' : 'Réclamer' }}
+                        </button>
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3">Totale <small>({{ i.produits.length }} produit(s))</small></td>
+                  <td class="droite">
+                    <strong>{{ nombre(total(i)) }}</strong>
+                    @if (totalReclame(i)) {
+                      <small class="qte-reclamee">− {{ nombre(totalReclame(i)) }} réclamé(s)</small>
+                    }
+                  </td>
+                  <td class="droite"><strong>{{ i.avancement?.recus ?? 0 }}</strong>/{{ i.avancement?.attendus ?? 0 }}</td>
+                  <td>
+                    @if (totalReclame(i)) {
+                      <small>{{ nombre(total(i) - totalReclame(i)) }} {{ i.statut === 'ajoute' ? 'validé(s)' : 'à recevoir' }}, entrent au stock au rangement</small>
+                    }
+                  </td>
+                  @if (i.statut === 'en_attente') {
+                    <td></td>
+                  }
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        }
+
+        @if (i.statut === 'en_attente') {
+          @if (i.bloque_par; as b) {
+            <div class="verrou-import">
+              <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z" /></svg>
+              <div>
+                <strong>Import verrouillé</strong>
+                <span>
+                  Terminez d'abord l'import plus ancien
+                  <b>{{ b.numero_livraison ? b.numero_livraison + ' · ' : '' }}n° {{ b.id }}</b>
+                  (arrivé le {{ b.arrivee | date: 'dd/MM/yyyy' }}) : les imports sont validés dans leur ordre d'arrivée.
+                </span>
+              </div>
+            </div>
+          }
+          @if (i.avancement?.anomalies?.length) {
+            <div class="ecarts-reception" [class.a-valider]="i.etape === 'a_valider'">
+              <strong>
+                Écarts de la réception mobile
+                @if (i.etape === 'a_valider') {
+                  · réclamations créées automatiquement
+                }
+              </strong>
+              <ul>
+                @for (a of i.avancement!.anomalies; track $index) {
+                  <li [attr.data-type]="a.type">
+                    <span class="type-ecart">{{ libellesAnomalie[a.type] }}</span>
+                    <span class="code">{{ a.reference }}</span> lot <span class="code">{{ a.lot }}</span>
+                    <b>× {{ a.quantite }}</b>
+                    @if (a.type !== 'manquant') {
+                      <small>mis de côté, hors stock</small>
+                    }
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+          <div class="actions-import">
+            <span class="aide-reclamer">
+              @switch (i.etape) {
+                @case ('a_valider') {
+                  Réception terminée sur le mobile{{ i.reception_par ? ' par ' + i.reception_par : '' }} avec des écarts : vérifiez les réclamations, puis validez.
+                }
+                @case ('receptionne') {
+                  Réception terminée sans écart{{ i.reception_par ? ' par ' + i.reception_par : '' }} : le plan de rangement sera validé automatiquement à son tour.
+                }
+                @default {
+                  En attente de la réception sur le mobile : le magasinier scanne les colis puis « Terminer la réception ».
+                }
+              }
+            </span>
+            <span class="boutons-import">
+              @if (i.reception === 'terminee') {
+                <button
+                  type="button"
+                  class="btn btn-stock"
+                  [disabled]="!i.produits.length || occupe() === i.id || !!i.bloque_par"
+                  [title]="i.bloque_par ? 'Verrouillé : terminez d\'abord l\'import n° ' + i.bloque_par.id : ''"
+                  (click)="ouvrirPlan(i)"
+                >
+                  <svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                  {{ i.etape === 'a_valider' ? 'Valider la réception' : 'Valider le plan de rangement' }}
+                </button>
+              } @else {
+                <span class="attente-mobile">
+                  <svg viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z" /></svg>
+                  {{ i.avancement?.recus ?? 0 }}/{{ i.avancement?.attendus ?? 0 }} reçus
+                </span>
+                @if (estAdmin()) {
+                  <button
+                    type="button"
+                    class="btn btn-secondaire"
+                    [disabled]="!i.produits.length || occupe() === i.id || !!i.bloque_par"
+                    title="Secours (téléphone en panne, réseau coupé…) : motif obligatoire, enregistré"
+                    (click)="ouvrirPlan(i, true)"
+                  >
+                    Ajouter sans contrôle mobile
+                  </button>
+                }
+              }
+            </span>
+          </div>
+        } @else {
+          <p class="historique">
+            <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z" /></svg>
+            {{ i.ajout_force ? 'Ajouté au stock (secours)' : 'Plan de rangement validé' }} le {{ i.date_ajout_stock | date: 'dd/MM/yyyy à HH:mm' }}{{ i.ajoute_par ? ' par ' + i.ajoute_par : '' }}.
+            @if (i.reception === 'terminee') {
+              Réception mobile terminée le {{ i.reception_fin | date: 'dd/MM/yyyy à HH:mm' }}{{ i.reception_par ? ' par ' + i.reception_par : '' }}.
+            }
+            @if (i.ajout_force) {
+              <b>Sans contrôle mobile</b> (motif : {{ i.motif_force }}).
+            }
+            Cet import ne peut plus être modifié.
+          </p>
+        }
+      </div>
+    }
+  </article>
+} @empty {
+  <p class="vide">
+    @if (chargement()) {
+      Chargement…
+    } @else if (imports().length) {
+      Aucun import ne correspond.
+    } @else {
+      Aucun import. Cliquez sur « Nouvel import » quand un arrivage arrive au magasin.
+    }
+  </p>
+}
+
+<!-- Plan de rangement : proposé automatiquement, modifiable, puis ajout au stock -->
+@if (aConfirmer(); as i) {
+  <div class="fond" (click)="aConfirmer.set(null)">
+    <div class="modale plan" (click)="$event.stopPropagation()">
+      <div class="modale-entete">
+        <div>
+          <h2>Plan de rangement</h2>
+          <p class="sous-titre-plan">
+            {{ i.produits.length }} produit(s) · {{ nombre(total(i)) }} au total.
+            @if (estAdmin()) {
+              Vérifiez les emplacements proposés, modifiez-les si besoin, puis validez : les places sont réservées et chaque produit entre au stock quand il est rangé avec le mobile.
+            } @else {
+              Les emplacements sont choisis automatiquement par le système selon les règles du magasin.
+            }
+            @if (totalReclame(i)) {
+              <br /><strong class="note-reclamation">{{ nombre(totalReclame(i)) }} produit(s) réclamé(s) ne seront pas rangés.</strong>
+            }
+          </p>
+        </div>
+        <button type="button" class="icone-btn" (click)="aConfirmer.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      @if (erreurPlan()) {
+        <p class="erreur">{{ erreurPlan() }}</p>
+      }
+      @if (nbTampon()) {
+        <p class="alerte-tampon">
+          {{ nbTampon() }} produit(s) iront en <b>zone tampon</b> (devant les blocs A et B) : plus de place libre à leur niveau.
+        </p>
+      }
+      @if (nbSansPlace()) {
+        <p class="erreur">
+          {{ nbSansPlace() }} produit(s) sans place : la zone tampon est pleine. Augmentez sa capacité (page Emplacements)
+          ou libérez des places.
+        </p>
+      }
+
+      @if (chargementPlan()) {
+        <p class="vide">Calcul du plan…</p>
+      } @else {
+        <div class="table-defilante">
+          <table>
+            <thead>
+              <tr>
+                <th>Produit</th>
+                <th>Lot</th>
+                <th class="droite">Quantité</th>
+                <th>Emplacement</th>
+                <th>Pourquoi</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of plan(); track $index; let idx = $index) {
+                <tr>
+                  <td>
+                    <span class="code ref">{{ p.produit.reference }}</span>
+                    <span class="badge-type" [attr.data-type]="p.produit.type">{{ libelle(p.produit) }}</span>
+                  </td>
+                  <td class="code">{{ p.produit.lot }}</td>
+                  <td class="droite"><strong>× {{ p.quantite }}</strong></td>
+                  <td>
+                    <input
+                      class="champ-placement"
+                      [readonly]="!estAdmin()"
+                      [class.lecture]="!estAdmin()"
+                      [class.tampon]="estTampon(p.emplacement)"
+                      [attr.list]="estAdmin() ? 'choix-' + idx : null"
+                      [value]="p.emplacement ?? ''"
+                      placeholder="—"
+                      (change)="modifierPlacement(idx, $any($event.target).value)"
+                      maxlength="6"
+                      autocomplete="off"
+                    />
+                    <datalist [id]="'choix-' + idx">
+                      @for (code of choixEmplacements(p); track code) {
+                        <option [value]="code"></option>
+                      }
+                    </datalist>
+                    @if (rang.get(p.emplacement ?? ''); as r) {
+                      <small class="rang">n° {{ r }} depuis la porte</small>
+                    } @else if (estTampon(p.emplacement)) {
+                      <small class="rang">zone tampon</small>
+                    }
+                  </td>
+                  <td class="motif" [attr.data-regle]="p.regle">{{ p.motif }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      @if (estAdmin() && planModifie()) {
+        <div class="motif-plan">
+          <p><strong>Plan modifié :</strong> le changement sera enregistré dans l'historique des emplacements.</p>
+          <div class="champs-motif-plan">
+            <label>
+              <span>Motif <b class="obligatoire">*</b></span>
+              <select name="motif-plan" [(ngModel)]="motifPlan.motif" (ngModelChange)="erreurPlan.set('')">
+                <option value="" disabled>Choisir un motif…</option>
+                @for (m of motifsDeplacement; track m.valeur) {
+                  <option [value]="m.valeur">{{ m.libelle }}</option>
+                }
+              </select>
+            </label>
+            <label>
+              Commentaire <small>{{ motifPlan.motif === 'autre' ? '(obligatoire)' : '(facultatif)' }}</small>
+              <input name="commentaire-plan" maxlength="255" [(ngModel)]="motifPlan.commentaire" placeholder="ex. D001 en réparation" />
+            </label>
+          </div>
+        </div>
+      }
+
+      @if (sansMobile()) {
+        <div class="motif-force">
+          <strong>Ajout sans contrôle mobile</strong>
+          <span>Les colis n'ont pas été scannés : l'ajout sera enregistré avec ce motif.</span>
+          <textarea name="motifForce" rows="2" maxlength="255" placeholder="Motif obligatoire (ex. téléphone en panne, réseau coupé)" [(ngModel)]="motifForce"></textarea>
+        </div>
+      }
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aConfirmer.set(null)">Annuler</button>
+        <button
+          type="button"
+          class="btn btn-stock"
+          [disabled]="occupe() === i.id || chargementPlan() || !plan().length || nbSansPlace() > 0"
+          (click)="confirmerAjoutStock()"
+        >
+          <svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+          {{ sansMobile() ? 'Ajouter au stock sans mobile' : 'Valider le plan de rangement' }}
+        </button>
+      </div>
+      <p class="note-plan">Après l'ajout, l'import ne pourra plus être modifié.</p>
+    </div>
+  </div>
+}
+
+<!-- Réclamation d'un produit : la quantité réclamée n'entre pas dans le stock -->
+@if (aChangerColis(); as cible) {
+  <div class="fond" (click)="aChangerColis.set(null)">
+    <form class="modale modale-colis" (click)="$event.stopPropagation()" (ngSubmit)="enregistrerChangementColis()" novalidate>
+      <div class="modale-entete">
+        <h2>Changer l'emplacement du colis n° {{ cible.affectation.colis }}</h2>
+        <button type="button" class="icone-btn" (click)="aChangerColis.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+      <p class="produit-reclame">
+        <span class="code ref">{{ cible.produit.reference }}</span> · {{ libelle(cible.produit) }} · lot
+        <span class="code">{{ cible.produit.lot }}</span>
+      </p>
+      <p class="trajet-colis">
+        Emplacement imposé actuel <span class="empl-actuel">{{ cible.affectation.emplacement }}</span>
+        → le magasinier devra le ranger au nouvel emplacement.
+      </p>
+
+      @if (erreurColis()) {
+        <p class="erreur">{{ erreurColis() }}</p>
+      }
+
+      <div class="champs-reclamation">
+        <label>
+          Nouvel emplacement
+          <input name="emplacement" maxlength="6" placeholder="ex. C018" autocomplete="off" class="code" [(ngModel)]="nouvelEmplacement" (ngModelChange)="erreurColis.set('')" />
+        </label>
+        <label>
+          Motif
+          <select name="motif" [(ngModel)]="motifColis.motif" (ngModelChange)="erreurColis.set('')">
+            <option value="">— Choisir —</option>
+            @for (m of motifsDeplacement; track m.valeur) {
+              <option [value]="m.valeur">{{ m.libelle }}</option>
+            }
+          </select>
+        </label>
+        <label>
+          Commentaire <small>{{ motifColis.motif === 'autre' ? '(obligatoire)' : '(facultatif)' }}</small>
+          <textarea name="commentaire" rows="2" maxlength="200" [(ngModel)]="motifColis.commentaire" placeholder="ex. C017 en réparation"></textarea>
+        </label>
+      </div>
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aChangerColis.set(null)">Annuler</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrementColis()">
+          {{ enregistrementColis() ? 'Enregistrement…' : 'Changer l\'emplacement' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}
+
+@if (aReclamer(); as cible) {
+  <div class="fond" (click)="aReclamer.set(null)">
+    <form class="modale modale-reclamation" (click)="$event.stopPropagation()" (ngSubmit)="enregistrerReclamation()" novalidate>
+      <div class="modale-entete">
+        <h2>{{ cible.produit.reclamation ? 'Modifier la réclamation' : 'Réclamer un produit' }}</h2>
+        <button type="button" class="icone-btn" (click)="aReclamer.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+      <p class="produit-reclame">
+        <span class="code ref">{{ cible.produit.reference }}</span> · {{ libelle(cible.produit) }} · lot
+        <span class="code">{{ cible.produit.lot }}</span> · {{ nombre(cible.produit.quantite) }} annoncé(s)
+      </p>
+
+      @if (erreurReclamation()) {
+        <p class="erreur">{{ erreurReclamation() }}</p>
+      }
+
+      <fieldset class="choix-motif">
+        <legend>Motif</legend>
+        @for (m of motifs; track m.valeur) {
+          <label class="motif-option" [class.choisi]="reclamation.motif === m.valeur" [attr.data-motif]="m.valeur">
+            <input type="radio" name="motif" [value]="m.valeur" [(ngModel)]="reclamation.motif" (ngModelChange)="erreurReclamation.set('')" />
+            <strong>{{ m.libelle }}</strong>
+            <small>{{ m.aide }}</small>
+          </label>
+        }
+      </fieldset>
+
+      <div class="champs-reclamation">
+        <label>
+          Quantité réclamée
+          <input name="quantite" type="number" min="1" [max]="cible.produit.quantite" step="1" [(ngModel)]="reclamation.quantite" />
+          <small>sur {{ nombre(cible.produit.quantite) }} · {{ nombre((cible.produit.quantite ?? 0) - (reclamation.quantite ?? 0)) }} entreront dans le stock</small>
+        </label>
+        <label>
+          Commentaire <small>(facultatif)</small>
+          <textarea name="commentaire" rows="2" maxlength="255" [(ngModel)]="reclamation.commentaire" placeholder="ex. 3 cartons absents du camion"></textarea>
+        </label>
+      </div>
+
+      <div class="modale-pied">
+        @if (cible.produit.reclamation) {
+          <button type="button" class="btn btn-secondaire annuler-reclamation" (click)="annulerReclamation()">Annuler la réclamation</button>
+        }
+        <button type="button" class="btn btn-secondaire" (click)="aReclamer.set(null)">Fermer</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrementReclamation()">
+          {{ enregistrementReclamation() ? 'Enregistrement…' : 'Enregistrer la réclamation' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}

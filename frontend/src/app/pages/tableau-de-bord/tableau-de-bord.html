@@ -1,0 +1,230 @@
+<div class="page-entete">
+  <div>
+    <h1>Tableau de bord</h1>
+    <p>
+      {{ maintenant | date: 'EEEE d MMMM y' }} · état du magasin en un coup d'œil
+      @if (derniereMaj(); as d) {
+        <span class="maj">· mis à jour à {{ d | date: 'HH:mm' }}</span>
+      }
+    </p>
+  </div>
+  <button type="button" class="btn btn-secondaire" [disabled]="chargement()" (click)="charger()">
+    <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" /></svg>
+    {{ chargement() ? 'Actualisation…' : 'Actualiser' }}
+  </button>
+</div>
+
+@if (erreur()) {
+  <p class="erreur">{{ erreur() }}</p>
+}
+
+@if (donnees(); as d) {
+  <!-- ---------- Alertes ---------- -->
+  <section class="carte bloc alertes">
+    <header class="bloc-titre">
+      <h2>Alertes</h2>
+      @if (d.alertes.length) {
+        <span class="compteur" [class.rouge]="nbCritiques()">{{ d.alertes.length }}</span>
+      }
+    </header>
+    @if (d.alertes.length) {
+      <ul>
+        @for (a of d.alertes; track $index) {
+          <li [attr.data-niveau]="a.niveau">
+            <span class="icone-alerte" aria-hidden="true">
+              @switch (a.niveau) {
+                @case ('critique') {
+                  <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" /></svg>
+                }
+                @case ('attention') {
+                  <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" /></svg>
+                }
+                @default {
+                  <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" /></svg>
+                }
+              }
+            </span>
+            <span class="niveau-alerte">{{ a.niveau === 'critique' ? 'Critique' : a.niveau === 'attention' ? 'Attention' : 'Info' }}</span>
+            <span class="texte-alerte">{{ a.message }}</span>
+            <a [routerLink]="a.lien" class="lien-btn">Voir</a>
+          </li>
+        }
+      </ul>
+    } @else {
+      <p class="aucune">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+        Aucune alerte : le magasin a de la place et aucun import n'est bloqué.
+      </p>
+    }
+  </section>
+
+  <!-- ---------- Remplissage ---------- -->
+  <h2 class="titre-section">Remplissage du magasin</h2>
+  <div class="zones">
+    @for (z of d.remplissage; track z.cle) {
+      <a class="carte zone" [routerLink]="'/emplacements'" [attr.data-etat]="etatZone(z)">
+        <div class="zone-tete">
+          <div>
+            <span class="zone-nom">{{ z.libelle }}</span>
+            <small>{{ z.detail }}</small>
+          </div>
+          <span class="pastille-etat">{{ libelleEtat[etatZone(z)] }}</span>
+        </div>
+        <strong class="taux">{{ nombre(z.taux) }}&nbsp;%</strong>
+        <small class="sous-taux">{{ z.cle === 'tampon' ? 'des places occupées' : 'de la capacité utilisée' }}</small>
+        <div class="barre-etats" role="img" [attr.aria-label]="z.libres + ' libres, ' + z.partiels + ' partiels, ' + z.pleins + ' pleins'">
+          @if (z.pleins) {
+            <span class="seg plein" [style.width.%]="part(z, z.pleins)" [title]="z.pleins + ' plein(s)'"></span>
+          }
+          @if (z.partiels) {
+            <span class="seg partiel" [style.width.%]="part(z, z.partiels)" [title]="z.partiels + ' partiel(s)'"></span>
+          }
+          @if (z.libres) {
+            <span class="seg libre" [style.width.%]="part(z, z.libres)" [title]="z.libres + ' libre(s)'"></span>
+          }
+        </div>
+        <ul class="compte-etats">
+          <li><i class="plein"></i>{{ z.pleins }} plein(s)</li>
+          <li><i class="partiel"></i>{{ z.partiels }} partiel(s)</li>
+          <li><i class="libre"></i>{{ z.libres }} libre(s)</li>
+        </ul>
+        <small class="produits">{{ nombre(z.produits) }} produit(s) · {{ z.total }} emplacement(s)</small>
+      </a>
+    }
+  </div>
+
+  <!-- ---------- Activité ---------- -->
+  <h2 class="titre-section">Activité</h2>
+  <div class="activite">
+    <section class="carte bloc chiffres">
+      <header class="bloc-titre"><h2>Aujourd'hui et 7 derniers jours</h2></header>
+      <table class="table-chiffres">
+        <thead>
+          <tr><th></th><th class="droite">Aujourd'hui</th><th class="droite">7 jours</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Imports ajoutés au stock</td><td class="droite">{{ d.activite.aujourdhui.imports }}</td><td class="droite">{{ d.activite.semaine.imports }}</td></tr>
+          <tr><td>Produits entrés</td><td class="droite">{{ nombre(d.activite.aujourdhui.entres) }}</td><td class="droite">{{ nombre(d.activite.semaine.entres) }}</td></tr>
+          <tr><td>Sorties vers la production</td><td class="droite">{{ d.activite.aujourdhui.sorties }}</td><td class="droite">{{ d.activite.semaine.sorties }}</td></tr>
+          <tr><td>Produits sortis</td><td class="droite">{{ nombre(d.activite.aujourdhui.sortis) }}</td><td class="droite">{{ nombre(d.activite.semaine.sortis) }}</td></tr>
+          <tr><td>Imports en attente</td><td class="droite" colspan="2"><a routerLink="/import">{{ d.imports_en_attente }}</a></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="carte bloc graphique">
+      <header class="bloc-titre">
+        <h2>Produits entrés et sortis par jour</h2>
+        <div class="legende">
+          <span><i class="entres"></i>Entrés</span>
+          <span><i class="sortis"></i>Sortis</span>
+        </div>
+      </header>
+      <div class="graphe" role="img" aria-label="Produits entrés et sortis sur les 7 derniers jours">
+        <div class="axe">
+          <span>{{ maxJour() }}</span>
+          <span>{{ maxJour() / 2 }}</span>
+          <span>0</span>
+        </div>
+        <div class="zone-barres">
+          <div class="grille"><span></span><span></span><span></span></div>
+          @for (j of d.activite.jours; track j.jour; let k = $index) {
+            <div class="jour" (mouseenter)="survol.set(k)" (mouseleave)="survol.set(null)" (focus)="survol.set(k)" (blur)="survol.set(null)" tabindex="0"
+                 [attr.aria-label]="(j.jour | date: 'EEEE d MMMM') + ' : ' + j.entres + ' entrés, ' + j.sortis + ' sortis'">
+              <div class="paire">
+                <span class="barre entres" [style.height.%]="hauteur(j.entres)"></span>
+                <span class="barre sortis" [style.height.%]="hauteur(j.sortis)"></span>
+              </div>
+              <span class="etiquette-jour" [class.auj]="k === 6">{{ k === 6 ? "Auj." : (j.jour | date: 'EEE d') }}</span>
+              @if (survol() === k) {
+                <div class="bulle" role="tooltip">
+                  <strong>{{ j.jour | date: 'EEEE d MMMM' }}</strong>
+                  <span><i class="entres"></i>{{ j.entres }} entré(s)</span>
+                  <span><i class="sortis"></i>{{ j.sortis }} sorti(s)</span>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+      <details class="donnees-tableau">
+        <summary>Voir les chiffres</summary>
+        <table>
+          <thead><tr><th>Jour</th><th class="droite">Entrés</th><th class="droite">Sortis</th></tr></thead>
+          <tbody>
+            @for (j of d.activite.jours; track j.jour) {
+              <tr><td>{{ j.jour | date: 'EEEE d MMMM' }}</td><td class="droite">{{ j.entres }}</td><td class="droite">{{ j.sortis }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </details>
+    </section>
+
+    <section class="carte bloc destinations">
+      <header class="bloc-titre"><h2>Sorties par destination <small>(7 jours)</small></h2></header>
+      @if (d.activite.destinations.length) {
+        <ul>
+          @for (dest of d.activite.destinations; track dest.destination) {
+            <li>
+              <span class="dest">{{ dest.destination }}</span>
+              <span class="piste"><span class="rempli" [style.width.%]="totalSortiesSemaine() ? (100 * dest.quantite) / totalSortiesSemaine() : 0"></span></span>
+              <span class="valeur">{{ nombre(dest.quantite) }} <small>({{ dest.sorties }} sortie(s))</small></span>
+            </li>
+          }
+        </ul>
+      } @else {
+        <p class="aucune neutre">Aucune sortie ces 7 derniers jours.</p>
+      }
+    </section>
+  </div>
+
+  <!-- ---------- Réclamations ---------- -->
+  <h2 class="titre-section">Réclamations <small>(30 derniers jours)</small></h2>
+  <div class="reclamations">
+    <section class="carte bloc">
+      <header class="bloc-titre">
+        <h2>Par motif</h2>
+        <a routerLink="/reclamations" class="lien-btn">Tout voir</a>
+      </header>
+      <ul class="motifs">
+        @for (m of motifs; track m.valeur) {
+          <li [attr.data-motif]="m.valeur">
+            <span>{{ m.libelle }}</span>
+            <strong>{{ nombre(quantiteMotif(m.valeur)) }}</strong>
+          </li>
+        }
+      </ul>
+      <p class="total-reclame">{{ nombre(totalReclame()) }} produit(s) réclamé(s) au total</p>
+      <ul class="suivi-rc">
+        <li data-statut="ouverte"><strong>{{ d.reclamations.suivi.ouvertes }}</strong> ouverte(s)</li>
+        <li data-statut="envoyee"><strong>{{ d.reclamations.suivi.envoyees }}</strong> envoyée(s) à l'Italie</li>
+        <li data-statut="reglee"><strong>{{ d.reclamations.suivi.reglees }}</strong> réglée(s)</li>
+        @if (d.reclamations.suivi.en_retard) {
+          <li class="retard"><strong>{{ d.reclamations.suivi.en_retard }}</strong> en retard (plus de {{ d.reclamations.suivi.delai_jours }} j)</li>
+        }
+      </ul>
+    </section>
+    <section class="carte bloc">
+      <header class="bloc-titre"><h2>Dernières réclamations</h2></header>
+      @if (d.reclamations.dernieres.length) {
+        <table class="table-reclam">
+          <tbody>
+            @for (r of d.reclamations.dernieres; track r.id) {
+              <tr>
+                <td class="code ref">{{ r.reference }}</td>
+                <td class="code">{{ r.lot }}</td>
+                <td><span class="motif" [attr.data-motif]="r.motif">{{ libelleMotif(r.motif) }}</span></td>
+                <td class="droite">× {{ r.quantite }}</td>
+                <td class="date">Import n° {{ r.import_id }} · {{ r.date | date: 'dd/MM HH:mm' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <p class="aucune neutre">Aucune réclamation.</p>
+      }
+    </section>
+  </div>
+} @else if (chargement()) {
+  <p class="chargement">Chargement du tableau de bord…</p>
+}

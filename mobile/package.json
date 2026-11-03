@@ -1,0 +1,44 @@
+{
+  "name": "mobile",
+  "version": "0.0.1",
+  "author": "Ionic Framework",
+  "homepage": "https://ionicframework.com/",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/common": "~20.3.0",
+    "@angular/compiler": "~20.3.0",
+    "@angular/core": "~20.3.0",
+    "@angular/forms": "~20.3.0",
+    "@angular/platform-browser": "~20.3.0",
+    "@angular/router": "~20.3.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/keyboard": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
+    "@fontsource/titillium-web": "^5.2.8",
+    "@ionic/angular": "~8.8.19",
+    "@zxing/browser": "0.1.5",
+    "@zxing/library": "0.21.3",
+    "ionicons": "~7.4.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0",
+    "zone.js": "~0.15.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^20.3.0",
+    "@angular/cli": "^20.3.0",
+    "@angular/compiler-cli": "~20.3.0",
+    "@angular/language-service": "~20.3.0",
+    "@capacitor/cli": "^7.0.0",
+    "@ionic/angular-toolkit": "~12.3.0",
+    "typescript": "~5.9.2"
+  },
+  "description": "An Ionic project"
+}

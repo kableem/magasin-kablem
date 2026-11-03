@@ -1,0 +1,438 @@
+/* Couleurs officielles Kablem (logo + site kablem.com) */
+:host {
+  --rouge: #e02222;
+  --rouge-fonce: #b81818;
+  --bleu-logo: #3b4a85;
+  --bleu: #0c71c3;
+  --bleu-ciel: #35baf2;
+  --nuit: #06163a;
+  --nuit-2: #0b2a5c;
+  --texte: #1c2340;
+  --gris: #6b7390;
+  --bord: #dde2ee;
+  display: block;
+}
+
+.ecran {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+}
+
+/* ---------- Panneau gauche ---------- */
+.hero {
+  position: relative;
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(224, 34, 34, 0.28), transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(12, 113, 195, 0.35), transparent 45%),
+    radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(160deg, var(--nuit) 0%, var(--nuit-2) 100%);
+  display: flex;
+  align-items: flex-end;
+  padding: 56px;
+}
+
+.illustration {
+  position: absolute;
+  top: 14%;
+  left: 4%;
+  width: 92%;
+  height: 64%;
+}
+
+.sol { stroke: rgba(255, 255, 255, 0.18); stroke-width: 2; }
+
+/* Import : camion */
+.carrosserie { fill: #1b2f63; stroke: rgba(255, 255, 255, 0.25); stroke-width: 1.5; }
+.soute { fill: #0a1838; }
+.vitre { fill: var(--bleu-ciel); opacity: 0.45; }
+.roue { fill: #0a1430; stroke: rgba(255, 255, 255, 0.35); stroke-width: 2; }
+.moyeu { fill: rgba(255, 255, 255, 0.5); }
+.camion { animation: moteur 1.6s ease-in-out infinite; }
+
+@keyframes moteur {
+  50% { transform: translateY(-1.5px); }
+}
+
+/* Colis */
+.colis-clair { fill: #e9edf7; }
+.colis-rouge { fill: var(--rouge); }
+.colis-bleu { fill: var(--bleu); }
+.scotch { stroke: rgba(6, 22, 58, 0.25); stroke-width: 3; }
+
+/* Tapis roulant */
+.tapis { fill: #1b2f63; stroke: rgba(255, 255, 255, 0.25); stroke-width: 1.5; }
+.pied-tapis { stroke: rgba(255, 255, 255, 0.25); stroke-width: 3; }
+.tapis-mouvement {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 2;
+  stroke-dasharray: 4 8;
+  animation: defile 0.6s linear infinite;
+}
+
+@keyframes defile {
+  to { stroke-dashoffset: -12; }
+}
+
+.colis-convoye { opacity: 0; animation: convoie 4.5s linear infinite; }
+
+@keyframes convoie {
+  0% { opacity: 0; transform: translateX(0); }
+  10%, 85% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(130px); }
+}
+
+/* Stock : étagère */
+.etagere line { stroke: #8fa3d6; stroke-width: 4; stroke-linecap: round; }
+.code-emplacement { font-size: 9px; font-weight: 600; fill: rgba(255, 255, 255, 0.45); }
+
+/* Emplacement : case ciblée + repère */
+.cible {
+  fill: rgba(224, 34, 34, 0.08);
+  stroke: var(--rouge);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  animation: clignote 1.6s ease-in-out infinite;
+}
+
+@keyframes clignote {
+  50% { opacity: 0.35; }
+}
+
+.colis-arrive {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: arrive 4.5s ease-out infinite;
+}
+
+@keyframes arrive {
+  0%, 55% { opacity: 0; transform: translateY(-14px) scale(0.8); }
+  70%, 92% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+
+.repere {
+  fill: var(--rouge);
+  filter: drop-shadow(0 4px 8px rgba(224, 34, 34, 0.6));
+  animation: rebondit 1.4s ease-in-out infinite;
+}
+.repere-centre { fill: #fff; }
+
+@keyframes rebondit {
+  50% { transform: translateY(-6px); }
+}
+
+.etiquette rect { fill: rgba(255, 255, 255, 0.1); stroke: rgba(255, 255, 255, 0.3); }
+.etiquette text { font-size: 10px; font-weight: 700; letter-spacing: 1px; fill: #fff; text-anchor: middle; }
+.etiquette-rouge rect { fill: rgba(224, 34, 34, 0.25); stroke: var(--rouge); }
+
+.hero-contenu {
+  position: relative;
+  max-width: 520px;
+  animation: monte 0.8s ease-out both;
+}
+
+.badge-site {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.point-vert {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3ddc84;
+  box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.6);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  70% { box-shadow: 0 0 0 8px rgba(61, 220, 132, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); }
+}
+
+.hero h1 {
+  margin: 22px 0 14px;
+  font-size: clamp(32px, 3.4vw, 46px);
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.hero h1 em {
+  font-style: normal;
+  background: linear-gradient(90deg, #ff5a5a, var(--rouge));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.accroche {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ---------- Panneau droit ---------- */
+.panneau {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: linear-gradient(180deg, #f7f9fd 0%, #eef2f9 100%);
+}
+
+/* Liseré rouge → bleu rappelant le logo */
+.panneau::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--rouge) 0 45%, var(--bleu-logo) 55% 100%);
+}
+
+.horloge {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  text-align: right;
+  color: var(--gris);
+}
+
+.horloge-heure { display: block; font-size: 22px; font-weight: 700; color: var(--texte); }
+.horloge-detail { font-size: 12.5px; }
+
+.carte {
+  width: 100%;
+  max-width: 400px;
+  padding: 40px 36px 32px;
+  background: #fff;
+  border-radius: 20px;
+  border: 1px solid #e7ebf3;
+  box-shadow: 0 24px 60px -24px rgba(6, 22, 58, 0.28);
+  animation: monte 0.6s ease-out both;
+}
+
+.carte.secouer { animation: secoue 0.45s; }
+
+@keyframes monte {
+  from { opacity: 0; transform: translateY(16px); }
+}
+
+@keyframes secoue {
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+.logo { display: block; width: 190px; margin: 0 auto 24px; }
+
+.carte h2 { margin: 0; font-size: 26px; color: var(--texte); text-align: center; }
+
+.sous-titre { margin: 6px 0 26px; text-align: center; color: var(--gris); }
+.sous-titre strong { color: var(--rouge); }
+
+.alerte {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #a11414;
+  background: #fdecec;
+  border: 1px solid #f6c4c4;
+}
+
+.alerte svg { width: 18px; flex-shrink: 0; fill: currentColor; }
+
+/* Champs avec libellé flottant */
+.champ {
+  position: relative;
+  display: block;
+  margin-bottom: 16px;
+}
+
+.champ input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 56px;
+  padding: 20px 46px 6px 46px;
+  font: inherit;
+  font-size: 15.5px;
+  color: var(--texte);
+  background: #f7f9fc;
+  border: 1.5px solid var(--bord);
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.champ input:focus {
+  background: #fff;
+  border-color: var(--bleu);
+  box-shadow: 0 0 0 4px rgba(12, 113, 195, 0.12);
+}
+
+.libelle {
+  position: absolute;
+  left: 46px;
+  top: 18px;
+  font-size: 15px;
+  color: var(--gris);
+  pointer-events: none;
+  transition: all 0.18s ease;
+}
+
+.champ input:focus + .libelle,
+.champ input:not(:placeholder-shown) + .libelle,
+.champ input:-webkit-autofill + .libelle {
+  top: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--bleu);
+}
+
+.icone {
+  position: absolute;
+  left: 15px;
+  top: 17px;
+  width: 21px;
+  fill: #9aa3bd;
+  transition: fill 0.2s;
+}
+
+.champ:focus-within .icone { fill: var(--bleu); }
+
+.oeil {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.oeil:hover { background: #edf1f8; }
+.oeil svg { width: 20px; fill: #7d86a3; }
+
+.maj { margin: -6px 0 12px; font-size: 13px; color: #b26b00; }
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 22px;
+  font-size: 14px;
+  color: var(--texte);
+}
+
+.aide { font-size: 12.5px; color: var(--gris); }
+
+/* Case "se souvenir" en interrupteur */
+.case { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.case input { position: absolute; opacity: 0; }
+
+.interrupteur {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: #cfd6e4;
+  transition: background 0.2s;
+}
+
+.interrupteur::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.case input:checked + .interrupteur { background: var(--bleu); }
+.case input:checked + .interrupteur::after { transform: translateX(16px); }
+.case input:focus-visible + .interrupteur { outline: 2px solid var(--bleu); outline-offset: 2px; }
+
+.bouton {
+  width: 100%;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--rouge) 0%, var(--rouge-fonce) 100%);
+  box-shadow: 0 10px 24px -10px rgba(224, 34, 34, 0.7);
+  transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+
+.bouton svg { width: 20px; fill: #fff; transition: transform 0.2s; }
+.bouton:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 14px 28px -10px rgba(224, 34, 34, 0.8); }
+.bouton:hover:not(:disabled) svg { transform: translateX(4px); }
+.bouton:focus-visible { outline: 3px solid rgba(12, 113, 195, 0.5); outline-offset: 2px; }
+.bouton:disabled { cursor: wait; filter: saturate(0.7); }
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: tourne 0.7s linear infinite;
+}
+
+@keyframes tourne {
+  to { transform: rotate(360deg); }
+}
+
+.pied { margin: 26px 0 0; font-size: 12px; color: var(--gris); text-align: center; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 960px) {
+  .ecran { grid-template-columns: minmax(0, 1fr); }
+  .hero { min-height: 190px; padding: 28px 24px; align-items: flex-end; }
+  .illustration { top: 0; left: 0; width: 100%; height: 100%; opacity: 0.35; }
+  .hero h1 { font-size: 28px; margin: 12px 0 6px; }
+  .accroche { font-size: 12px; }
+  .panneau { justify-content: flex-start; padding-top: 24px; }
+  .horloge { position: static; margin-bottom: 18px; text-align: center; }
+}
+
+@media (max-width: 480px) {
+  .carte { padding: 32px 22px 26px; border-radius: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,260 @@
+<div class="page-entete">
+  <div>
+    <h1 class="titre">
+      <span class="pastille">
+        <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" /></svg>
+      </span>
+      Réclamations
+    </h1>
+    <p>Produits réclamés à la réception des imports. Les quantités réclamées ne sont pas entrées dans le stock.</p>
+  </div>
+  <div class="actions-entete">
+    <button type="button" class="btn-fichier excel" [disabled]="telechargement() !== null || !nbProduits()" (click)="telecharger('excel')" title="Télécharger la liste affichée en Excel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-2.6 14h-2.1L12 13.3 9.7 17H7.6l3.3-5-3.1-5h2.1l2.1 3.6L14.1 7h2.1l-3.1 5 3.3 5z" /></svg>
+      <span>{{ telechargement() === 'excel' ? 'Téléchargement…' : 'Télécharger Excel' }}</span>
+    </button>
+    <button type="button" class="btn-fichier pdf" [disabled]="telechargement() !== null || !nbProduits()" (click)="telecharger('pdf')" title="Télécharger la liste affichée en PDF">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z" /></svg>
+      <span>{{ telechargement() === 'pdf' ? 'Téléchargement…' : 'Télécharger PDF' }}</span>
+    </button>
+  </div>
+</div>
+
+<!-- Quantités réclamées par motif (cliquer pour filtrer) -->
+<div class="motifs">
+  @for (m of parMotif(); track m.valeur) {
+    <button type="button" class="carte-motif" [attr.data-motif]="m.valeur" [class.actif]="filtreMotif() === m.valeur" (click)="filtrerMotif(m.valeur)">
+      <span class="nom">{{ m.libelle }}</span>
+      <strong>{{ nombre(m.quantite) }}</strong>
+      <small>{{ m.aide }}</small>
+      
+
+    </button>
+  }
+</div>
+
+<!-- Filtres -->
+<section class="carte barre">
+  <div class="onglets-statut" role="group" aria-label="Statut">
+    <button type="button" [class.actif]="filtreStatut() === ''" (click)="filtrerStatut('')">Toutes</button>
+    @for (s of statuts; track s.valeur) {
+      <button type="button" [class.actif]="filtreStatut() === s.valeur" [attr.data-statut]="s.valeur" (click)="filtrerStatut(s.valeur)">
+        {{ s.libelle }}
+        @if (compteurs(); as st) {
+          <span>{{ s.valeur === 'ouverte' ? st.ouvertes : s.valeur === 'envoyee' ? st.envoyees : st.reglees }}</span>
+        }
+      </button>
+    }
+    <button type="button" class="en-retard" [class.actif]="filtreStatut() === 'en_retard'" (click)="filtrerStatut('en_retard')">
+      En retard
+      @if (compteurs(); as st) {
+        <span>{{ st.en_retard }}</span>
+      }
+    </button>
+  </div>
+  <span class="resultat">{{ imports().length }} import(s) · <strong>{{ nbProduits() }}</strong> produit(s) réclamé(s)</span>
+  <form class="filtres" (ngSubmit)="charger()">
+    <label>
+      Référence
+      <input name="reference" placeholder="ex. F0411" [ngModel]="filtreReference()" (ngModelChange)="filtreReference.set($event)" autocomplete="off" />
+    </label>
+    <label>
+      Motif
+      <select name="motif" [ngModel]="filtreMotif()" (ngModelChange)="filtreMotif.set($event); charger()">
+        <option value="">Tous les motifs</option>
+        @for (m of motifs; track m.valeur) {
+          <option [value]="m.valeur">{{ m.libelle }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Import du
+      <input name="du" type="date" [max]="dateAu() || null" [ngModel]="dateDu()" (ngModelChange)="dateDu.set($event ?? ''); charger()" />
+    </label>
+    <label>
+      au
+      <input name="au" type="date" [min]="dateDu() || null" [ngModel]="dateAu()" (ngModelChange)="dateAu.set($event ?? ''); charger()" />
+    </label>
+    <button type="submit" class="btn btn-secondaire">Rechercher</button>
+    <button type="button" class="btn btn-secondaire effacer" [disabled]="!nbFiltresActifs()" (click)="effacerFiltres()">Effacer</button>
+  </form>
+</section>
+
+@if (erreur()) {
+  <p class="erreur">{{ erreur() }}</p>
+}
+
+<!-- Un bloc par import -->
+@for (i of imports(); track i.import_id) {
+  <section class="carte import">
+    <header class="import-entete">
+      <div>
+        <h2>
+          Import n° {{ i.import_id }} du {{ i.date_import | date: 'dd/MM/yyyy HH:mm' }}
+          @if (i.numero_livraison) {
+            <span class="livraison-rc">{{ i.numero_livraison }}</span>
+          }
+        </h2>
+        <small>
+          @if (i.statut === 'ajoute') {
+            <span class="statut ajoute">Ajouté au stock le {{ i.date_ajout_stock | date: 'dd/MM/yyyy HH:mm' }}</span>
+          } @else {
+            <span class="statut attente">En attente</span>
+          }
+          · {{ i.produits.length }} produit(s) réclamé(s)
+        </small>
+      </div>
+      <div class="telecharger-import">
+        <button
+          type="button"
+          class="btn-fichier mail petit"
+          [disabled]="telechargement() !== null"
+          (click)="telecharger('mail', i.import_id)"
+          title="Préparer un mail Outlook : objet, texte et PDF de la réclamation déjà remplis, il reste à choisir le destinataire"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z" /></svg>
+          <span>{{ telechargement() === 'mail' + i.import_id ? '…' : 'Mail' }}</span>
+        </button>
+        <button type="button" class="btn-fichier excel petit" [disabled]="telechargement() !== null" (click)="telecharger('excel', i.import_id)" [title]="'Import n° ' + i.import_id + ' en Excel'">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-2.6 14h-2.1L12 13.3 9.7 17H7.6l3.3-5-3.1-5h2.1l2.1 3.6L14.1 7h2.1l-3.1 5 3.3 5z" /></svg>
+          <span>{{ telechargement() === 'excel' + i.import_id ? '…' : 'Excel' }}</span>
+        </button>
+        <button type="button" class="btn-fichier pdf petit" [disabled]="telechargement() !== null" (click)="telecharger('pdf', i.import_id)" [title]="'Import n° ' + i.import_id + ' en PDF'">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z" /></svg>
+          <span>{{ telechargement() === 'pdf' + i.import_id ? '…' : 'PDF' }}</span>
+        </button>
+      </div>
+    </header>
+    <div class="table-defilante">
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Référence</th>
+            <th>Lot</th>
+            <th class="droite">Annoncée</th>
+            <th class="droite">Réclamée</th>
+            <th>Motif</th>
+            <th>Commentaire</th>
+            <th>Par</th>
+            <th>Suivi</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (p of i.produits; track p.id) {
+            <tr>
+              <td><span class="badge-type" [attr.data-type]="p.type">{{ libelle(p) }}</span></td>
+              <td class="code ref">{{ p.reference }}</td>
+              <td class="code">{{ p.lot }}</td>
+              <td class="droite">{{ nombre(p.quantite_annoncee) }}</td>
+              <td class="droite"><strong>{{ nombre(p.quantite) }}</strong></td>
+              <td><span class="motif" [attr.data-motif]="p.motif">{{ libelleMotif(p.motif) }}</span></td>
+              <td class="commentaire">{{ p.commentaire || '—' }}</td>
+              <td class="date">{{ p.par || '—' }}<br /><small>{{ p.date_reclamation | date: 'dd/MM/yyyy HH:mm' }}</small></td>
+              <td class="suivi">
+                <span class="statut-rc" [attr.data-statut]="p.statut">
+                  {{ libelleStatut(p.statut) }}{{ p.solution ? ' · ' + libelleSolution(p.solution) : '' }}
+                </span>
+                @if (p.en_retard) {
+                  <span class="retard" title="Non réglée depuis plus du délai fixé">En retard · {{ p.age_jours }} j</span>
+                }
+                @if (p.note_suivi) {
+                  <small class="note">{{ p.note_suivi }}</small>
+                }
+                @if (p.statut === 'envoyee' && p.date_envoi) {
+                  <small class="note">Envoyée le {{ p.date_envoi | date: 'dd/MM/yyyy' }}</small>
+                }
+                @if (p.statut === 'reglee' && p.date_reglement) {
+                  <small class="note">Réglée le {{ p.date_reglement | date: 'dd/MM/yyyy' }}</small>
+                }
+                @if (estGestionnaire()) {
+                  <button type="button" class="lien-btn bouton-suivi" (click)="ouvrirSuivi(p)">Mettre à jour</button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+} @empty {
+  <section class="carte vide">
+    @if (chargement()) {
+      Chargement…
+    } @else if (nbFiltresActifs()) {
+      Aucune réclamation ne correspond aux filtres.
+    } @else {
+      Aucune réclamation pour l'instant. On réclame un produit depuis la page <a routerLink="/import">Import</a>, avant
+      « Ajouter au stock ».
+    }
+  </section>
+}
+
+<!-- Délai au-delà duquel une réclamation non réglée est en retard (administrateur, chef de magasin) -->
+@if (estGestionnaire() && compteurs(); as c) {
+  <section class="carte bloc-delai">
+    <form (ngSubmit)="enregistrerDelai()" class="form-delai">
+      <label>
+        Une réclamation non réglée est <strong>en retard</strong> après
+        <input name="delai" type="number" min="1" max="365" [ngModel]="saisieDelai()" (ngModelChange)="saisieDelai.set($event); erreurDelai.set('')" />
+        jours
+      </label>
+      <button type="submit" class="btn btn-secondaire" [disabled]="saisieDelai() === c.delai_jours">Enregistrer</button>
+    </form>
+    @if (erreurDelai()) {
+      <p class="erreur">{{ erreurDelai() }}</p>
+    }
+  </section>
+}
+
+<!-- Suivi d'une réclamation avec l'Italie -->
+@if (aSuivre(); as p) {
+  <div class="fond" (click)="aSuivre.set(null)">
+    <form class="modale modale-suivi" (click)="$event.stopPropagation()" (ngSubmit)="enregistrerSuivi()" novalidate>
+      <div class="modale-entete">
+        <h2>Suivi de la réclamation</h2>
+        <button type="button" class="icone-btn" (click)="aSuivre.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+      <p class="produit-suivi">
+        <span class="code ref">{{ p.reference }}</span> · lot <span class="code">{{ p.lot }}</span> · {{ p.quantite }} réclamé(s) ·
+        <span class="motif" [attr.data-motif]="p.motif">{{ libelleMotif(p.motif) }}</span>
+      </p>
+      @if (erreurSuivi()) {
+        <p class="erreur">{{ erreurSuivi() }}</p>
+      }
+      <fieldset class="etapes">
+        <legend>Statut</legend>
+        @for (s of statuts; track s.valeur; let k = $index) {
+          <label class="etape" [class.choisie]="suivi.statut === s.valeur" [attr.data-statut]="s.valeur">
+            <input type="radio" name="statut" [value]="s.valeur" [(ngModel)]="suivi.statut" (ngModelChange)="erreurSuivi.set('')" />
+            <span class="num">{{ k + 1 }}</span>
+            {{ s.libelle }}
+          </label>
+        }
+      </fieldset>
+      @if (suivi.statut === 'reglee') {
+        <fieldset class="solutions">
+          <legend>Solution obtenue</legend>
+          @for (s of solutions; track s.valeur) {
+            <label class="solution" [class.choisie]="suivi.solution === s.valeur">
+              <input type="radio" name="solution" [value]="s.valeur" [(ngModel)]="suivi.solution" (ngModelChange)="erreurSuivi.set('')" />
+              {{ s.libelle }}
+            </label>
+          }
+        </fieldset>
+      }
+      <label class="champ-note">
+        Note <small>(facultatif : n° d'avoir, date du mail, contact…)</small>
+        <textarea name="note" rows="2" maxlength="255" [(ngModel)]="suivi.note" placeholder="ex. Avoir n° 4521 reçu le 20/10"></textarea>
+      </label>
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aSuivre.set(null)">Annuler</button>
+        <button type="submit" class="btn btn-principal" [disabled]="enregistrementSuivi()">
+          {{ enregistrementSuivi() ? 'Enregistrement…' : 'Enregistrer' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}

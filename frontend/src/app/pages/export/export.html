@@ -1,0 +1,117 @@
+<div class="page-entete">
+  <div>
+    <h1 class="titre">
+      <span class="pastille">
+        <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z" /></svg>
+      </span>
+      Export
+    </h1>
+    <p>Sorties vers la production, en FIFO obligatoire. Les sorties se font sur l'application mobile (Export) : chaque emplacement et chaque ticket sont scannés. En cas de panne, le chef peut faire une sortie de secours depuis Gestion de stock, avec un motif. Sur le mobile, l'administrateur peut sortir un autre lot ou un autre emplacement que celui proposé : la sortie est notée « Hors FIFO ».</p>
+  </div>
+  <a class="btn btn-principal" routerLink="/stock">
+    <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z" /></svg>
+    Sortie de secours
+  </a>
+</div>
+
+<!-- Filtres -->
+<section class="carte barre">
+  <span class="resultat">
+    {{ filtres().length }} sortie(s) · <strong>{{ nombre(totalSorti()) }}</strong> produit(s) sorti(s)
+  </span>
+  <div class="filtres">
+    <label>
+      Référence
+      <input placeholder="ex. F0411" [ngModel]="filtreReference()" (ngModelChange)="filtreReference.set($event)" autocomplete="off" />
+    </label>
+    <label>
+      Lot
+      <input placeholder="ex. 202613252" inputmode="numeric" [ngModel]="filtreLot()" (ngModelChange)="filtreLot.set($event)" autocomplete="off" />
+    </label>
+    <label>
+      Type de produit
+      <select [ngModel]="filtreType()" (ngModelChange)="filtreType.set($event)">
+        <option value="">Tous les types</option>
+        @for (t of types; track t.valeur) {
+          <option [value]="t.valeur">{{ t.libelle }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Sortie du
+      <input type="date" [max]="dateAu() || null" [ngModel]="dateDu()" (ngModelChange)="dateDu.set($event ?? '')" />
+    </label>
+    <label>
+      au
+      <input type="date" [min]="dateDu() || null" [ngModel]="dateAu()" (ngModelChange)="dateAu.set($event ?? '')" />
+    </label>
+    <button type="button" class="btn btn-secondaire effacer" [disabled]="!nbFiltresActifs()" (click)="effacerFiltres()">
+      <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+      Effacer
+    </button>
+  </div>
+</section>
+
+<section class="carte">
+  @if (erreur()) {
+    <p class="erreur">{{ erreur() }}</p>
+  }
+  <div class="table-defilante">
+    <table>
+      <thead>
+        <tr>
+          <th>Date de sortie</th>
+          <th>Référence</th>
+          <th>Type</th>
+          <th class="droite">Quantité</th>
+          <th>Destination</th>
+          <th>Par</th>
+          <th>Contrôle</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (e of filtres(); track e.id) {
+          <tr>
+            <td class="date">{{ e.date_export | date: 'dd/MM/yyyy HH:mm' }}</td>
+            <td class="code ref">{{ e.reference }}</td>
+            <td><span class="badge-type" [attr.data-type]="e.type">{{ libelle(e) }}</span></td>
+            <td class="droite"><strong>{{ nombre(e.quantite) }}</strong></td>
+            <td>
+              @if (e.destination) {
+                <span class="destination">{{ e.destination }}</span>
+              } @else {
+                —
+              }
+            </td>
+            <td class="date">{{ e.utilisateur || '—' }}</td>
+            <td>
+              @switch (e.origine) {
+                @case ('mobile') { <span class="origine mobile">Mobile · scanné</span> }
+                @case ('web_secours') {
+                  <span class="origine secours">Secours web</span>
+                  @if (e.motif_force) { <small class="motif" [attr.title]="e.motif_force">{{ e.motif_force }}</small> }
+                }
+                @default { <span class="origine web">Web (ancien)</span> }
+              }
+              @if (e.hors_fifo) {
+                <span class="origine hors-fifo" title="L'administrateur a sorti un autre lot ou un autre emplacement que celui proposé par le FIFO">Hors FIFO</span>
+              }
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="7" class="vide">
+              @if (chargement()) {
+                Chargement…
+              } @else if (exports().length) {
+                Aucune sortie ne correspond aux filtres
+              } @else {
+                Aucune sortie pour l'instant. Les sorties se font sur l'application mobile (Export).
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>

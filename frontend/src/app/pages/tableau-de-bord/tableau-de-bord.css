@@ -1,0 +1,169 @@
+/* Couleurs : états (vert / orange / rouge, toujours avec un libellé), séries du graphique (bleu / orange validés) */
+:host {
+  --bon: #1f9d55; --bon-fond: #e4f4ec;
+  --attention: #c27400; --attention-fond: #fdf1dc;
+  --critique: #c62828; --critique-fond: #fde6e6;
+  --info: #0c71c3; --info-fond: #e6f1fb;
+  --plein: #d12b2b; --partiel: #e08a00; --libre: #8fd3ab;
+  --serie-entres: #1f6fd1; --serie-sortis: #d4740b;
+}
+
+.page-entete .btn svg { width: 18px; }
+.page-entete p::first-letter { text-transform: uppercase; }
+.maj { color: var(--gris); }
+.titre-section { margin: 26px 0 12px; font-size: 18px; color: var(--nuit); }
+.titre-section small { font-size: 13px; font-weight: 400; color: var(--gris); }
+
+.bloc { padding: 16px 18px; }
+.bloc-titre { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.bloc-titre h2 { margin: 0; font-size: 15.5px; color: var(--nuit); }
+.bloc-titre h2 small { font-weight: 400; color: var(--gris); }
+.aucune { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; color: var(--bon); }
+.aucune svg { width: 20px; fill: currentColor; }
+.aucune.neutre { color: var(--gris); }
+.chargement { padding: 40px; text-align: center; color: var(--gris); }
+.droite { text-align: right; }
+.code { font-family: Consolas, monospace; font-size: 13.5px; }
+.ref { font-weight: 700; }
+.date { color: var(--gris); font-size: 12.5px; }
+
+/* ---------- Alertes ---------- */
+.compteur { min-width: 26px; padding: 2px 8px; text-align: center; font-size: 13px; font-weight: 700; color: #fff; background: var(--attention); border-radius: 999px; }
+.compteur.rouge { background: var(--critique); }
+.alertes ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.alertes li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+.alertes li[data-niveau='critique'] { --c: var(--critique); background: var(--critique-fond); }
+.alertes li[data-niveau='attention'] { --c: var(--attention); background: var(--attention-fond); }
+.alertes li[data-niveau='info'] { --c: var(--info); background: var(--info-fond); }
+.icone-alerte svg { display: block; width: 20px; fill: var(--c); }
+.niveau-alerte { min-width: 70px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c); }
+.texte-alerte { flex: 1; color: var(--texte); }
+
+/* ---------- Remplissage ---------- */
+.zones { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.zone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  color: var(--texte);
+  text-decoration: none;
+  border-top: 4px solid var(--c);
+  transition: transform 0.15s;
+}
+.zone:hover { transform: translateY(-2px); }
+.zone[data-etat='bon'] { --c: var(--bon); --c-fond: var(--bon-fond); }
+.zone[data-etat='attention'] { --c: var(--attention); --c-fond: var(--attention-fond); }
+.zone[data-etat='critique'] { --c: var(--critique); --c-fond: var(--critique-fond); }
+.zone-tete { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.zone-nom { display: block; font-weight: 700; font-size: 15px; color: var(--nuit); }
+.zone-tete small { color: var(--gris); font-size: 12.5px; }
+.pastille-etat { padding: 2px 9px; font-size: 12px; font-weight: 700; color: var(--c); background: var(--c-fond); border-radius: 999px; white-space: nowrap; }
+.taux { font-size: 34px; line-height: 1.05; color: var(--texte); font-variant-numeric: tabular-nums; }
+.sous-taux { margin-top: -4px; color: var(--gris); font-size: 12.5px; }
+.barre-etats { display: flex; gap: 2px; height: 12px; margin-top: 4px; background: #eef1f7; border-radius: 6px; overflow: hidden; }
+.seg { display: block; height: 100%; }
+.seg.plein { background: var(--plein); }
+.seg.partiel { background: var(--partiel); }
+.seg.libre { background: var(--libre); }
+.compte-etats { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--texte); }
+.compte-etats i, .legende i, .bulle i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+i.plein { background: var(--plein); }
+i.partiel { background: var(--partiel); }
+i.libre { background: var(--libre); }
+.produits { color: var(--gris); font-size: 12px; }
+
+/* ---------- Activité ---------- */
+.activite { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 14px; align-items: start; }
+.table-chiffres { width: 100%; font-size: 14px; border-collapse: collapse; }
+.table-chiffres th { padding: 0 0 6px 12px; white-space: nowrap; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gris); background: none; }
+.table-chiffres td { padding: 8px 0; border-top: 1px solid #eef1f7; white-space: normal; }
+.table-chiffres td.droite { font-weight: 700; font-variant-numeric: tabular-nums; padding-left: 12px; }
+.table-chiffres a { color: var(--bleu); }
+
+.legende { display: flex; gap: 12px; font-size: 12.5px; color: var(--texte); }
+i.entres { background: var(--serie-entres); }
+i.sortis { background: var(--serie-sortis); }
+.graphe { display: grid; grid-template-columns: 34px 1fr; gap: 6px; height: 190px; }
+.axe { display: flex; flex-direction: column; justify-content: space-between; height: calc(100% - 22px); font-size: 11px; color: var(--gris); text-align: right; font-variant-numeric: tabular-nums; }
+.axe span { transform: translateY(-50%); }
+.axe span:last-child { transform: translateY(50%); }
+.zone-barres { position: relative; display: grid; grid-template-columns: repeat(7, 1fr); }
+.grille { position: absolute; inset: 0 0 22px 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+.grille span { border-top: 1px solid #eef1f7; }
+.grille span:last-child { border-top: 1px solid #c9d0dc; }
+.jour { position: relative; display: flex; flex-direction: column; align-items: center; outline: none; cursor: default; }
+.jour:hover .paire, .jour:focus-visible .paire { background: rgba(13, 33, 80, 0.05); }
+.paire { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: center; gap: 2px; width: 100%; height: calc(100% - 22px); border-radius: 4px; }
+.barre { display: block; width: 32%; max-width: 16px; min-height: 0; border-radius: 4px 4px 0 0; }
+.barre.entres { background: var(--serie-entres); }
+.barre.sortis { background: var(--serie-sortis); }
+.etiquette-jour { height: 22px; padding-top: 5px; font-size: 11.5px; color: var(--gris); white-space: nowrap; }
+.etiquette-jour.auj { font-weight: 700; color: var(--texte); }
+.bulle {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--texte);
+  background: #fff;
+  border: 1px solid var(--bord);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px -10px rgba(6, 22, 58, 0.35);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.bulle strong::first-letter { text-transform: uppercase; }
+.donnees-tableau { margin-top: 10px; font-size: 13px; }
+.donnees-tableau summary { cursor: pointer; color: var(--bleu); font-weight: 600; }
+.donnees-tableau table { margin-top: 6px; width: 100%; font-size: 13px; }
+.donnees-tableau td, .donnees-tableau th { padding: 5px 8px; }
+
+.destinations ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.destinations li { display: grid; grid-template-columns: minmax(28px, max-content) minmax(60px, 1fr) auto; align-items: center; gap: 10px; font-size: 13.5px; }
+.dest { font-weight: 700; white-space: nowrap; }
+.piste { height: 10px; background: #eef1f7; border-radius: 5px; overflow: hidden; }
+.rempli { display: block; height: 100%; background: var(--nuit); border-radius: 5px; }
+.valeur { font-weight: 700; font-variant-numeric: tabular-nums; }
+.valeur small { font-weight: 400; color: var(--gris); }
+
+/* ---------- Réclamations ---------- */
+[data-motif='manquant'] { --motif: #b3161b; --motif-fond: #fde6e6; }
+[data-motif='non_conforme'] { --motif: #9a5b00; --motif-fond: #fdf1dc; }
+[data-motif='endommage'] { --motif: #7a3d9c; --motif-fond: #f3e8fa; }
+[data-motif='non_commande'] { --motif: #0c71c3; --motif-fond: #e6f1fb; }
+[data-motif='autre'] { --motif: #5a6276; --motif-fond: #eef1f7; }
+.reclamations { display: grid; grid-template-columns: 1fr 2fr; gap: 14px; align-items: start; }
+.motifs { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.motifs li { display: flex; justify-content: space-between; padding: 7px 10px; font-size: 14px; border-left: 4px solid var(--motif); background: #f7f9fc; border-radius: 6px; }
+.motifs strong { color: var(--texte); font-variant-numeric: tabular-nums; }
+.total-reclame { margin: 10px 0 0; font-size: 13px; color: var(--gris); }
+.table-reclam { width: 100%; font-size: 13.5px; }
+.table-reclam td { padding: 8px 6px; }
+.motif { display: inline-block; padding: 2px 9px; font-size: 12px; font-weight: 600; color: var(--motif); background: var(--motif-fond); border-radius: 999px; white-space: nowrap; }
+
+@media (max-width: 1200px) {
+  .zones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .activite { grid-template-columns: 1fr 1fr; }
+  .graphique { grid-column: 1 / -1; grid-row: 1; }
+}
+@media (max-width: 700px) {
+  .zones, .activite, .reclamations { grid-template-columns: 1fr; }
+  .graphique { grid-row: auto; }
+}
+.jour:first-child .bulle { left: 0; transform: none; }
+.jour:last-child .bulle { left: auto; right: 0; transform: none; }
+
+/* Suivi des réclamations avec l'Italie */
+[data-statut="ouverte"] { --statut: #b3161b; }
+[data-statut="envoyee"] { --statut: #0c71c3; }
+[data-statut="reglee"] { --statut: #17784a; }
+.suivi-rc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 0; padding: 10px 0 0; list-style: none; font-size: 13px; border-top: 1px solid #eef1f7; }
+.suivi-rc strong { color: var(--statut, var(--texte)); }
+.suivi-rc .retard strong { color: #c27400; }

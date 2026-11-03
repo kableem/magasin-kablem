@@ -1,0 +1,104 @@
+@if (auth.utilisateur(); as u) {
+  <div class="layout" [class.reduite]="sidebarReduite()" [class.tiroir-ouvert]="sidebarOuverte()">
+    <!-- Navbar -->
+    <header class="navbar">
+      <button type="button" class="icone-btn" (click)="basculerSidebar()" aria-label="Menu">
+        <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" /></svg>
+      </button>
+      <a routerLink="/" class="marque">
+        <img src="logo-kablem.png" alt="Kab-lem Group" />
+        <span class="separateur"></span>
+        <span class="titre">Magasin</span>
+      </a>
+
+      <div class="utilisateur">
+        <button type="button" class="profil" (click)="menuUtilisateur.set(!menuUtilisateur())">
+          <span class="avatar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" /></svg>
+          </span>
+          <span class="identite">
+            <strong>{{ u.matricule }}</strong>
+            <small>{{ libellesRoles[u.role] }}</small>
+          </span>
+          <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z" /></svg>
+        </button>
+        @if (menuUtilisateur()) {
+          <div class="menu-deroulant">
+            <div class="menu-entete">
+              <strong>Matricule {{ u.matricule }}</strong>
+              <small>{{ libellesRoles[u.role] }}</small>
+            </div>
+            <button type="button" class="deconnexion" (click)="auth.logout()">
+              <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" /></svg>
+              Déconnexion
+            </button>
+          </div>
+        }
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <nav>
+        @if (planificateur()) {
+          <span class="section">Catalogue</span>
+          @for (l of liensAdmin; track l.chemin) {
+            @if (l.chemin === '/articles') {
+              <a [routerLink]="l.chemin" routerLinkActive="actif" class="lien" [attr.title]="l.libelle">
+                <svg viewBox="0 0 24 24"><path [attr.d]="l.icone" /></svg>
+                <span>{{ l.libelle }}</span>
+              </a>
+            }
+          }
+        } @else {
+        <span class="section">Magasin</span>
+        @if (peutGerer()) {
+          <a [routerLink]="lienTableau.chemin" routerLinkActive="actif" class="lien" [attr.title]="lienTableau.libelle">
+            <svg viewBox="0 0 24 24"><path [attr.d]="lienTableau.icone" /></svg>
+            <span>{{ lienTableau.libelle }}</span>
+          </a>
+        }
+        @for (l of liensMagasin; track l.chemin) {
+          <a [routerLink]="l.chemin" routerLinkActive="actif" class="lien" [attr.title]="l.libelle">
+            <svg viewBox="0 0 24 24"><path [attr.d]="l.icone" /></svg>
+            <span>{{ l.libelle }}</span>
+          </a>
+        }
+
+        @if (peutGerer()) {
+          <a [routerLink]="lienJournal.chemin" routerLinkActive="actif" class="lien" [attr.title]="lienJournal.libelle">
+            <svg viewBox="0 0 24 24"><path [attr.d]="lienJournal.icone" /></svg>
+            <span>{{ lienJournal.libelle }}</span>
+          </a>
+        }
+
+        }
+
+        @if (estAdmin()) {
+          <span class="section">Administration</span>
+          @for (l of liensAdmin; track l.chemin) {
+            <a [routerLink]="l.chemin" routerLinkActive="actif" class="lien" [attr.title]="l.libelle">
+              <svg viewBox="0 0 24 24"><path [attr.d]="l.icone" /></svg>
+              <span>{{ l.libelle }}</span>
+            </a>
+          }
+        }
+      </nav>
+      <div class="sidebar-pied">
+        <span class="point-vert"></span>
+        <span>Kab-lem Tunisia · Menzel Jemil</span>
+      </div>
+    </aside>
+    <div class="voile" (click)="sidebarOuverte.set(false)"></div>
+
+    <main class="contenu">
+      <router-outlet />
+    </main>
+
+    @if (toast.message()) {
+      <div class="toast" [class.toast-erreur]="toast.erreur()" role="status">{{ toast.message() }}</div>
+    }
+  </div>
+} @else {
+  <router-outlet />
+}

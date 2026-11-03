@@ -1,0 +1,88 @@
+// Identité Kab-lem (mêmes couleurs que l'application web : frontend/src/styles.css)
+// Bleu nuit + rouge Kab-lem, jaune des étiquettes d'emplacement, Titillium Web.
+
+:root {
+  // ---------- Marque ----------
+  --k-nuit: #06163a;
+  --k-marine: #13296b;
+  --k-bleu: #3b4a85;
+  --k-ciel: #0c71c3;
+  --k-rouge: #e02222;
+  --k-rouge-fonce: #b81818;
+  --k-jaune: #ffd21f; // étiquettes d'emplacement
+
+  // ---------- États ----------
+  --k-vert: #138a4b;
+  --k-vert-clair: #e2f6ea;
+  --k-orange: #d97a00;
+  --k-orange-clair: #fff1dc;
+  --k-erreur: #d42020;
+  --k-erreur-clair: #fde6e6;
+
+  // ---------- Surfaces et texte ----------
+  --k-fond: #eef1f7;
+  --k-surface: #ffffff;
+  --k-surface-2: #f5f7fb;
+  --k-bord: #e2e6ef;
+  --k-texte: #14193a;
+  --k-gris: #69708c;
+  --k-rayon: 20px;
+  --k-ombre: 0 14px 34px -22px rgba(6, 22, 58, 0.55);
+  --k-ombre-forte: 0 22px 44px -22px rgba(6, 22, 58, 0.6);
+  --k-degrade-nuit: linear-gradient(150deg, #06163a 0%, #10265f 60%, #1b3a86 100%);
+  --k-degrade-rouge: linear-gradient(150deg, #e02222 0%, #c41b1b 60%, #9f1414 100%);
+
+  // ---------- Ionic ----------
+  --ion-font-family: 'Titillium Web', 'Segoe UI', Roboto, Arial, sans-serif;
+  --ion-background-color: var(--k-fond);
+  --ion-text-color: var(--k-texte);
+
+  --ion-color-primary: #13296b;
+  --ion-color-primary-rgb: 19, 41, 107;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #11245e;
+  --ion-color-primary-tint: #2b3e7a;
+
+  --ion-color-secondary: #e02222;
+  --ion-color-secondary-rgb: 224, 34, 34;
+  --ion-color-secondary-contrast: #ffffff;
+  --ion-color-secondary-contrast-rgb: 255, 255, 255;
+  --ion-color-secondary-shade: #c51e1e;
+  --ion-color-secondary-tint: #e33838;
+
+  --ion-color-success: #138a4b;
+  --ion-color-success-rgb: 19, 138, 75;
+  --ion-color-success-contrast: #ffffff;
+  --ion-color-success-contrast-rgb: 255, 255, 255;
+  --ion-color-success-shade: #117942;
+  --ion-color-success-tint: #2b965d;
+
+  --ion-color-warning: #d97a00;
+  --ion-color-warning-rgb: 217, 122, 0;
+  --ion-color-warning-contrast: #ffffff;
+  --ion-color-warning-contrast-rgb: 255, 255, 255;
+  --ion-color-warning-shade: #bf6b00;
+  --ion-color-warning-tint: #dd871a;
+
+  --ion-color-danger: #d42020;
+  --ion-color-danger-rgb: 212, 32, 32;
+  --ion-color-danger-contrast: #ffffff;
+  --ion-color-danger-contrast-rgb: 255, 255, 255;
+  --ion-color-danger-shade: #bb1c1c;
+  --ion-color-danger-tint: #d83636;
+
+  --ion-color-medium: #69708c;
+  --ion-color-medium-rgb: 105, 112, 140;
+  --ion-color-medium-contrast: #ffffff;
+  --ion-color-medium-contrast-rgb: 255, 255, 255;
+  --ion-color-medium-shade: #5c637b;
+  --ion-color-medium-tint: #787e98;
+
+  --ion-color-light: #f5f7fb;
+  --ion-color-light-rgb: 245, 247, 251;
+  --ion-color-light-contrast: #14193a;
+  --ion-color-light-contrast-rgb: 20, 25, 58;
+  --ion-color-light-shade: #d8d9dd;
+  --ion-color-light-tint: #f6f8fb;
+}
