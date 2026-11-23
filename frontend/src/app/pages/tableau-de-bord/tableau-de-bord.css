@@ -167,3 +167,5 @@ i.sortis { background: var(--serie-sortis); }
 .suivi-rc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 0; padding: 10px 0 0; list-style: none; font-size: 13px; border-top: 1px solid #eef1f7; }
 .suivi-rc strong { color: var(--statut, var(--texte)); }
 .suivi-rc .retard strong { color: #c27400; }
+
+.actions-entete { display: flex; flex-wrap: wrap; gap: 10px; }

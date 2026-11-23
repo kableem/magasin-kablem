@@ -1,13 +1,15 @@
+import { nomEmplacement } from '../../services/plan';
 import { EmplPipe } from '../../composants/empl.pipe';
 import { Component, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { IonButton, IonContent, IonFooter, IonIcon, IonSpinner, IonToolbar, ViewWillEnter } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
-  cloudOfflineOutline, scanOutline, chevronForward, chevronDown, chevronUp, play, lockClosedOutline, checkmarkDone,
-  alertCircle, homeOutline, cubeOutline, flagOutline, removeCircle, addCircle, gridOutline, desktopOutline, closeOutline,
-  layersOutline, checkmarkCircle, refreshOutline, arrowForward,
+  arrowDown, cloudOfflineOutline, scanOutline, chevronForward, chevronDown, chevronUp, play, lockClosedOutline, checkmarkDone,
+  alertCircle, homeOutline, cubeOutline, flagOutline, removeCircle, addCircle, gridOutline, desktopOutline, closeOutline, downloadOutline,
+  layersOutline, checkmarkCircle, refreshOutline, arrowForward, createOutline, printOutline,
 } from 'ionicons/icons';
 import { Lecture, ScannerComponent } from '../../composants/scanner.component';
 import { EnteteComponent } from '../../composants/entete.component';
@@ -15,7 +17,7 @@ import { ControlesService, OperationEnAttente } from '../../services/controles.s
 import { RetourService } from '../../services/retour.service';
 import { NavigationService } from '../../services/navigation.service';
 import {
-  Couleur, ETAPES_IMPORT, FinReception, ImportReception, LIBELLES_TYPE, PaletteReception, ResultatControle, TypePalette, codeEmplacement,
+  CartonReception, PaletteCossesReception, Couleur, ETAPES_IMPORT, FinReception, ImportReception, LIBELLES_TYPE, PaletteReception, ReferenceAttendue, ResultatControle, TypePalette, codeEmplacement, nombre,
   referenceEtLot,
 } from '../../services/modeles';
 
@@ -46,7 +48,7 @@ interface ModeScan {
 @Component({
   selector: 'app-reception',
   standalone: true,
-  imports: [EmplPipe, DatePipe, IonContent, IonButton, IonSpinner, IonIcon, IonFooter, IonToolbar, ScannerComponent, EnteteComponent],
+  imports: [EmplPipe, RouterLink, DatePipe, IonContent, IonButton, IonSpinner, IonIcon, IonFooter, IonToolbar, ScannerComponent, EnteteComponent],
   template: `
     <app-entete titre="Réception" module="Import" retour="/import" [etape]="!!choisi()" (precedent)="precedent()"></app-entete>
     <ion-content class="ion-padding">
@@ -76,7 +78,11 @@ interface ModeScan {
                 <small>Arrivé le {{ i.arrivee | date: 'dd/MM/yyyy' }} · {{ i.produits }} produit(s) · {{ etapes[i.etape] }}</small>
                 <span class="barre"><i [style.width.%]="pourcent(i)"></i></span>
                 <span class="bas">
-                  <span><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }} reçus</span>
+                  @if (i.pieces) {
+                    <span><b>{{ nombre(i.avancement.recus) }}</b>/{{ nombre(i.avancement.attendus) }} pièces</span>
+                  } @else {
+                    <span><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }} reçus</span>
+                  }
                   <ion-icon name="chevron-forward"></ion-icon>
                 </span>
               </button>
@@ -102,7 +108,21 @@ interface ModeScan {
             </h2>
             <p>
               @switch (f.etape) {
-                @case ('ajoute') { Les palettes sont rangées et au stock.{{ aDesAutres() ? ' Rangez les cosses axiales et les connecteurs avec Rangement.' : '' }} }
+                @case ('ajoute') {
+                  @if (separee()) {
+                    Réception terminée{{ f.reclamations_creees ? ' : ' + f.reclamations_creees + ' réclamation(s) créée(s) automatiquement' : '' }}.
+                    @if (choisi()?.cartons?.length) {
+                      Imprimez l'étiquette de chaque carton sur le web (page Import), collez-la, puis Rangement : étiquette d'un carton de la palette, puis emplacement (toute la palette entre au stock).
+                    } @else {
+                      Passez maintenant au Rangement : scannez chaque produit, puis l'étiquette de son emplacement.
+                    }
+                    @if (f.hors_import_en_attente?.length) {
+                      Pas encore au stock (référence absente du catalogue) : {{ f.hors_import_en_attente!.join(', ') }}.
+                    }
+                  } @else {
+                    Les palettes sont rangées et au stock.{{ aDesAutres() ? ' Rangez les cosses axiales et les connecteurs avec Rangement.' : '' }}
+                  }
+                }
                 @case ('receptionne') {
                   Tous les colis sont conformes. L'import sera validé dès que
                   {{ f.bloque_par?.numero_livraison ?? "l'import plus ancien" }} le sera.
@@ -110,14 +130,23 @@ interface ModeScan {
                 @default { {{ f.reclamations_creees }} réclamation(s) créée(s) automatiquement. Le chef de magasin vérifie et valide l'import sur le web. }
               }
             </p>
+            @if (separee() && f.etape === 'ajoute') {
+              <ion-button expand="block" class="k-btn-principal" routerLink="/rangement">
+                <ion-icon slot="start" name="grid-outline"></ion-icon> Ranger maintenant
+              </ion-button>
+            }
             @if (f.anomalies.length) {
               <ul class="ecarts">
                 @for (a of f.anomalies; track $index) {
                   <li [attr.data-type]="a.type">
                     <b>{{ libellesAnomalie[a.type] }}</b>
-                    <span class="mono">{{ a.reference }}</span> lot {{ a.lot }} · × {{ a.quantite }}
-                    @if (a.type !== 'manquant') {
-                      <small>mettez-le de côté</small>
+                    @if (a.unite === 'pieces') {
+                      <span class="mono">{{ a.reference }}</span> · {{ nombre(a.recues ?? 0) }} / {{ nombre(a.attendues ?? 0) }} pièces
+                    } @else {
+                      <span class="mono">{{ a.reference }}</span> lot {{ a.lot }} · × {{ a.quantite }}
+                      @if (a.type === 'en_trop' || a.type === 'hors_import') {
+                        <small>mettez-le de côté</small>
+                      }
                     }
                   </li>
                 }
@@ -136,17 +165,112 @@ interface ModeScan {
             [cibleTexte]="mode().cibleTexte"
             [compteur]="mode().compteur"
             [resultat]="resultat()"
-            [libelleManuel]="mode().attendu === 'emplacement' ? 'Code de l\\'emplacement' : 'Contenu du QR'"
-            [exempleManuel]="mode().attendu === 'emplacement' ? 'ex. D012' : 'ex. F0391;13000;10;202613167;1'"
             (lecture)="lire($event)"
           ></app-scanner>
+
+          @if (separee() && aDesPlates()) {
+            <!-- Palette de cosses : des cartons neufs seulement (rangée entière en haut) ; les cosses séparées n'y vont jamais -->
+            @if (modeCosses() === 'carton' && choisi()?.palette_ouverte; as pc) {
+              <div class="bandeau-palette k-apparait">
+                <span class="pastille-palette"><ion-icon name="grid-outline"></ion-icon></span>
+                <span class="bandeau-texte">
+                  <b>Palette {{ pc.numero }}</b>
+                  <small>{{ pc.cosses ? pc.contenu : 'Vide : scannez les cartons posés dessus' }}</small>
+                </span>
+                <span class="compte-palette"><b>{{ pc.cosses }}</b></span>
+              </div>
+            } @else if (modeCosses() === 'carton') {
+              <button type="button" class="ouvrir-palette" [disabled]="occupe()" (click)="ouvrirPaletteCosses()">
+                <ion-icon name="grid-outline"></ion-icon>
+                <span><b>Ouvrir une palette</b><small>ou scannez : la palette s’ouvre seule au 1er carton</small></span>
+              </button>
+            }
+            <!-- Cosses plates : Cartons ou Séparées ; le mode choisi reste jusqu'au prochain changement -->
+            @if (questionMode()) {
+              <p class="question-mode">Ces cosses arrivent-elles <b>en cartons</b> ou <b>séparées</b> ? Choisissez : le scan continue.</p>
+            }
+            <div class="modes-cosses" role="radiogroup" aria-label="Cosses en cartons ou séparées" [class.a-choisir]="questionMode()">
+              <button type="button" role="radio" [attr.aria-checked]="modeCosses() === 'carton'" [class.actif]="modeCosses() === 'carton'" [disabled]="occupe()" (click)="changerMode('carton')">
+                <ion-icon name="cube-outline"></ion-icon> Cartons
+              </button>
+              <button type="button" role="radio" [attr.aria-checked]="modeCosses() === 'separe'" [class.actif]="modeCosses() === 'separe'" [disabled]="occupe()" (click)="changerMode('separe')">
+                <ion-icon name="layers-outline"></ion-icon> Séparées
+              </button>
+            </div>
+            @if (modeCosses() === 'carton') {
+              <small class="aide-mode">{{ choisi()?.carton_ouvert ? 'Les cosses vont dans le carton ' + choisi()!.carton_ouvert!.numero + '.' : 'La prochaine cosse ouvre un nouveau carton' + (choisi()?.palette_ouverte ? ' sur la palette ' + choisi()!.palette_ouverte!.numero : '') + '.' }}</small>
+            } @else {
+              <small class="aide-mode">Cosses séparées : sans palette, chacune se range seule aux niveaux 1 et 2.</small>
+            }
+          }
+
+          @if (separee() && aDesConnecteurs()) {
+            <!-- Connecteurs : chaque carton (ticket vert) sur une palette ; ou compléter une palette du magasin -->
+            @if (choisi()?.palette_descendue; as pd) {
+              <div class="bandeau-palette descendue k-apparait">
+                <span class="pastille-palette"><ion-icon name="arrow-down"></ion-icon></span>
+                <span class="bandeau-texte">
+                  <b>Palette de {{ pd.emplacement | empl }} descendue</b>
+                  <small>{{ etapePalette() === 'remettre' ? 'Posez-la en ' + (pd.emplacement | empl) + ' et scannez cette étiquette.' : pd.contenu + ' · scannez les cartons à ajouter' }}</small>
+                </span>
+                <span class="compte-palette"><b>+{{ pd.a_ajouter ?? 0 }}</b></span>
+              </div>
+            } @else if (etapePalette() === 'place') {
+              <div class="bandeau-palette descendue k-apparait">
+                <span class="pastille-palette"><ion-icon name="scan-outline"></ion-icon></span>
+                <span class="bandeau-texte">
+                  <b>Compléter une palette du magasin</b>
+                  <small>Scannez l'étiquette jaune de la place de la palette de connecteurs.</small>
+                </span>
+                <button type="button" class="lien" (click)="etapePalette.set(null)">Annuler</button>
+              </div>
+            } @else {
+              @if (choisi()?.palette_ouverte?.famille === 'connecteur') {
+                <div class="bandeau-palette k-apparait">
+                  <span class="pastille-palette"><ion-icon name="grid-outline"></ion-icon></span>
+                  <span class="bandeau-texte">
+                    <b>Palette {{ choisi()!.palette_ouverte!.numero }} · connecteurs</b>
+                    <small>{{ choisi()!.palette_ouverte!.contenu }}</small>
+                  </span>
+                  <span class="compte-palette"><b>{{ choisi()!.palette_ouverte!.nb_cartons }}</b></span>
+                </div>
+              }
+              <button type="button" class="ouvrir-palette" [disabled]="occupe()" (click)="etapePalette.set('place')">
+                <ion-icon name="arrow-down"></ion-icon>
+                <span><b>Compléter une palette du magasin</b><small>Connecteurs : la palette s’ouvre seule au 1er carton ; ou descendez une palette pour la compléter</small></span>
+              </button>
+            }
+          }
+
+          <!-- Plus de correction à la réception (décision du 2026-11-23) : ni « Mettre dans le carton », ni « la sortir du carton » -->
+
+          @if (choisi()?.carton_ouvert; as k) {
+            <!-- Carton ouvert : ses cosses (une seule référence, un seul lot) -->
+            <section class="palette k-carte carton-ouvert">
+              <div class="palette-tete">
+                <span class="pastille-palette"><ion-icon name="cube-outline"></ion-icon></span>
+                <div>
+                  <b>Carton {{ k.numero }}{{ k.palette_numero ? ' · palette ' + k.palette_numero : '' }}</b>
+                  <small>{{ k.cosses ? k.reference + ' · lot ' + k.lot + (k.pieces !== null ? ' · ' + nombre(k.pieces) + ' pièces' : '') : 'Scannez le ticket vert de la 1re cosse du carton' }}</small>
+                </div>
+                <span class="compte-palette"><b>{{ k.cosses }}</b></span>
+              </div>
+              <ul class="bobines">
+                @for (x of k.liste; track x.controle_id) {
+                  <li>
+                    <span><b class="mono">{{ x.reference }}</b>{{ x.colis ? ' · colis ' + x.colis : '' }}{{ x.pieces !== null ? ' · ' + nombre(x.pieces) : '' }}</span>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
 
           @if (enAttente()) {
             <div class="k-attente k-apparait">
               <ion-icon name="cloud-offline-outline"></ion-icon>
               <div>
-                <h2>Gardé sur le téléphone</h2>
-                <p>Pas de réseau : le scan sera envoyé dès le retour du Wi-Fi. Le résultat apparaîtra dans « En attente ».</p>
+                <h2>Pas de réseau · {{ controles.attente().length }} scan(s) gardé(s)</h2>
+                <p>Continuez à scanner : chaque ticket est enregistré sur le téléphone et partira tout seul au retour du Wi-Fi. Le résultat apparaîtra dans « En attente ». Ne fermez pas l'application.</p>
               </div>
             </div>
           }
@@ -168,9 +292,6 @@ interface ModeScan {
                     @for (b of p.bobines; track b.controle_id) {
                       <li>
                         <span><b class="mono">{{ b.reference }}</b> lot {{ b.lot }}{{ b.colis ? ' · colis ' + b.colis : '' }}</span>
-                        @if (!b.range) {
-                          <button type="button" class="retirer" (click)="retirer(p, b.controle_id)" aria-label="Retirer ce colis de la palette"><ion-icon name="close-outline"></ion-icon></button>
-                        }
                       </li>
                     }
                   </ul>
@@ -214,7 +335,20 @@ interface ModeScan {
           } @else if (toutRecu()) {
             <section class="sans-palette tout-recu k-carte">
               <ion-icon name="checkmark-done"></ion-icon>
-              <p><b>Tout est reçu ({{ i.avancement.recus }}/{{ i.avancement.attendus }}).</b> Touchez « Terminer la réception » en bas.</p>
+              <p><b>Tout est reçu ({{ i.pieces ? nombre(i.avancement.recus) + '/' + nombre(i.avancement.attendus) + ' pièces' : i.avancement.recus + '/' + i.avancement.attendus }}).</b> Touchez « Terminer la réception » en bas.</p>
+            </section>
+          } @else if (separee()) {
+            <section class="sans-palette k-carte">
+              <ion-icon name="download-outline"></ion-icon>
+              <p>
+                @if (aDesPlates()) {
+                  <b>Scannez le ticket de chaque produit reçu.</b> Cosses en <b>Cartons</b> : les tickets d'un carton, puis « Terminer le carton » (le suivant s'ouvre au scan suivant) ; les cartons vont sur la palette ouverte, « Terminer la palette » quand elle est pleine (la palette se range en haut).
+                  En <b>Séparées</b> : scannez simplement, sans palette (elles se rangent aux niveaux 1 et 2). Les étiquettes des cartons s'imprimeront sur le web.
+                } @else {
+                  <b>Scannez le ticket de chaque produit reçu</b> : l'application contrôle le produit, le lot et les quantités.
+                  Les produits ne sont pas encore rangés : le rangement se fera ensuite, avec <b>Rangement</b>, une fois la réception terminée.
+                }
+              </p>
             </section>
           } @else if (aDesPalettes()) {
             <section class="sans-palette k-carte">
@@ -232,17 +366,48 @@ interface ModeScan {
                 <span class="code">{{ i.numero_livraison ?? 'Import n° ' + i.id }}</span>
                 <small>{{ etapes[i.etape] }}</small>
               </div>
-              <span class="compte"><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }}</span>
+              @if (i.pieces) {
+                <span class="compte"><b>{{ nombre(i.avancement.recus) }}</b>/{{ nombre(i.avancement.attendus) }}<small> pièces</small></span>
+              } @else {
+                <span class="compte"><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }}</span>
+              }
             </div>
             <span class="barre"><i [style.width.%]="pourcent(i)"></i></span>
             @if (i.avancement.en_trop || i.avancement.hors_import) {
-              <small class="alerte-suivi">{{ i.avancement.en_trop + i.avancement.hors_import }} colis mis de côté (en trop ou hors import)</small>
+              <small class="alerte-suivi">{{ i.avancement.en_trop + i.avancement.hors_import }} colis en plus (en trop ou hors import){{ separee() ? ' : ils entrent au stock, une réclamation sera créée' : ' mis de côté' }}</small>
             }
             <button type="button" class="detail" (click)="detailOuvert.set(!detailOuvert())">
               {{ detailOuvert() ? 'Masquer le détail' : 'Voir le détail des produits et des palettes' }}
               <ion-icon [name]="detailOuvert() ? 'chevron-up' : 'chevron-down'"></ion-icon>
             </button>
             @if (detailOuvert()) {
+              @if (i.palettes_cosses?.length) {
+                <ul class="liste-palettes">
+                  @for (p of i.palettes_cosses; track p.id) {
+                    <li class="palette-cosses">
+                      <span><b>Palette {{ p.numero }}</b> · {{ p.contenu }}<small>{{ etatPaletteCosses(p) }}</small></span>
+                    </li>
+                    @for (k of p.cartons; track k.id) {
+                      @if (k.cosses) {
+                        <li class="carton-de-palette">
+                          <span><b>Carton {{ k.numero }}</b> · {{ k.cosses }} cosse{{ k.cosses > 1 ? 's' : '' }} {{ k.reference }}<small>{{ etatCarton(k) }}</small></span>
+                        </li>
+                      }
+                    }
+                  }
+                </ul>
+              }
+              @if (i.pieces; as pc) {
+                <p class="aide-pieces">Total de pièces annoncé par référence ; tout écart sera réclamé.</p>
+                <ul class="lignes">
+                  @for (r of pc.references; track r.reference) {
+                    <li [class.complet]="r.statut === 'conforme' || r.statut === 'tolere'" [class.trop]="r.statut === 'en_trop'">
+                      <span><b class="mono">{{ r.reference }}</b><small>{{ types[r.type] }}{{ r.type_cosse ? ' · ' + (r.type_cosse === 'axiale' ? 'axiale' : 'plate') : '' }} · {{ r.colis }} colis{{ r.lots.length ? ' · lot ' + lotsTexte(r) : '' }}</small></span>
+                      <span class="qte"><b>{{ nombre(r.recues) }}</b>/{{ nombre(r.attendues) }}</span>
+                    </li>
+                  }
+                </ul>
+              } @else {
               <ul class="lignes">
                 @for (l of i.lignes ?? []; track l.id) {
                   <li [class.complet]="l.recus >= l.attendue">
@@ -251,14 +416,12 @@ interface ModeScan {
                   </li>
                 }
               </ul>
+              }
               @if (palettes().length) {
                 <ul class="liste-palettes">
                   @for (p of palettes(); track p.id) {
                     <li>
                       <span><b>Palette {{ p.numero }}</b> · {{ compte(p) }}<small>{{ etatPalette(p) }}</small></span>
-                      @if (p.statut !== 'ouverte' && !paletteCourante()) {
-                        <button type="button" class="lien" (click)="rouvrir(p)"><ion-icon name="refresh-outline"></ion-icon>Rouvrir</button>
-                      }
                     </li>
                   }
                 </ul>
@@ -290,7 +453,35 @@ interface ModeScan {
             <p class="pied-info">{{ paletteCourante()!.mode === 'entiere' ? 'Scannez l’emplacement pour poser la palette.' : 'Rangez chaque ' + nomColis(paletteCourante(), false) + ' : ticket, puis emplacement.' }}</p>
           } @else {
             <div class="actions">
-              @if (toutRecu()) {
+              @if (separee() && choisi()!.carton_ouvert) {
+                @if (choisi()!.palette_ouverte; as pc) {
+                  <ion-button class="k-btn-clair fin-btn" [disabled]="occupe()" (click)="terminerPaletteCosses()">
+                    <ion-icon slot="start" name="grid-outline"></ion-icon> Fin palette {{ pc.numero }}
+                  </ion-button>
+                } @else {
+                  <ion-button class="k-btn-clair fin-btn" [disabled]="termine()" (click)="confirmerFin()">
+                    <ion-icon slot="start" name="flag-outline"></ion-icon> Terminer
+                  </ion-button>
+                }
+                <ion-button expand="block" class="k-btn-principal suivant" [disabled]="occupe()" (click)="terminerCarton()">
+                  <ion-icon slot="start" name="checkmark-done"></ion-icon> Terminer le carton {{ choisi()!.carton_ouvert!.numero }}
+                </ion-button>
+              } @else if (separee() && choisi()!.palette_descendue; as pd) {
+                <ion-button expand="block" class="k-btn-principal suivant" [disabled]="occupe() || etapePalette() === 'remettre'" (click)="etapePalette.set('remettre')">
+                  <ion-icon slot="start" name="checkmark-done"></ion-icon> Terminer : la remettre en {{ pd.emplacement | empl }}
+                </ion-button>
+              } @else if (separee() && choisi()!.palette_ouverte) {
+                <ion-button class="k-btn-clair fin-btn" [disabled]="termine()" (click)="confirmerFin()">
+                  <ion-icon slot="start" name="flag-outline"></ion-icon> Terminer
+                </ion-button>
+                <ion-button expand="block" class="k-btn-principal suivant" [disabled]="occupe()" (click)="terminerPaletteCosses()">
+                  <ion-icon slot="start" name="grid-outline"></ion-icon> Terminer la palette {{ choisi()!.palette_ouverte!.numero }}
+                </ion-button>
+              } @else if (separee()) {
+                <ion-button expand="block" class="suivant" [class.k-btn-principal]="toutRecu()" [class.k-btn-clair]="!toutRecu()" [disabled]="termine() || !choisi()!.avancement.recus" (click)="confirmerFin()">
+                  <ion-icon slot="start" name="flag-outline"></ion-icon> Terminer la réception
+                </ion-button>
+              } @else if (toutRecu()) {
                 <ion-button class="k-btn-clair" [disabled]="occupe()" (click)="nouvellePalette()" aria-label="Nouvelle palette">
                   <ion-icon slot="icon-only" name="layers-outline"></ion-icon>
                 </ion-button>
@@ -325,20 +516,27 @@ interface ModeScan {
         </div>
 
         <div class="bilan">
-          <div class="chiffre"><b>{{ i.avancement.recus }}</b><span>/{{ i.avancement.attendus }}</span></div>
+          @if (i.pieces) {
+            <div class="chiffre"><b>{{ nombre(i.avancement.recus) }}</b><span>/{{ nombre(i.avancement.attendus) }}</span></div>
+          } @else {
+            <div class="chiffre"><b>{{ i.avancement.recus }}</b><span>/{{ i.avancement.attendus }}</span></div>
+          }
           <div class="jauge">
-            <small>{{ sansEcart(i) ? 'Tous les colis sont reçus' : 'Colis reçus' }}</small>
+            <small>{{ i.pieces ? (sansEcart(i) ? 'Toutes les références sont dans l’écart accepté' : 'Pièces reçues') : sansEcart(i) ? 'Tous les colis sont reçus' : 'Colis reçus' }}</small>
             <span class="barre"><i [style.width.%]="pourcent(i)"></i></span>
           </div>
         </div>
 
         @if (!sansEcart(i)) {
           <ul class="puces">
-            @if (manquants(i) > 0) {
+            @for (r of horsTolerance(i); track r.reference) {
+              <li [class.rouge]="r.ecart < 0" [class.orange]="r.ecart > 0"><ion-icon [name]="r.ecart < 0 ? 'remove-circle' : 'add-circle'"></ion-icon><span><b>{{ r.reference }} : {{ nombre(r.recues) }} / {{ nombre(r.attendues) }} pièces</b> · réclamation de {{ nombre(r.ecart < 0 ? -r.ecart : r.ecart) }} pièces {{ r.ecart < 0 ? 'manquantes' : 'en trop' }}</span></li>
+            }
+            @if (!i.pieces && manquants(i) > 0) {
               <li class="rouge"><ion-icon name="remove-circle"></ion-icon><span><b>{{ manquants(i) }} manquant(s)</b> · une réclamation sera créée</span></li>
             }
             @if (i.avancement.en_trop + i.avancement.hors_import > 0) {
-              <li class="orange"><ion-icon name="add-circle"></ion-icon><span><b>{{ i.avancement.en_trop + i.avancement.hors_import }} colis en trop</b> · à mettre de côté, hors stock</span></li>
+              <li class="orange"><ion-icon name="add-circle"></ion-icon><span><b>{{ i.avancement.en_trop + i.avancement.hors_import }} colis en plus</b> · {{ separee() ? 'entrent au stock, réclamation créée' : 'à mettre de côté, hors stock' }}</span></li>
             }
           </ul>
         }
@@ -346,7 +544,11 @@ interface ModeScan {
         <div class="ensuite">
           <small>Ensuite</small>
           @if (sansEcart(i)) {
-            <p><ion-icon name="checkmark-done"></ion-icon><span>Les palettes sont déjà au stock.{{ aDesAutres() ? ' Rangez les cosses axiales et les connecteurs avec Rangement.' : '' }} L'import suivant pourra être reçu.</span></p>
+            @if (separee()) {
+              <p><ion-icon name="checkmark-done"></ion-icon><span>Les écarts deviennent des réclamations, tout ce qui est reçu entre au stock. Ensuite : {{ choisi()?.cartons?.length ? 'étiquettes des cartons sur le web, puis Rangement (étiquette d’un carton de chaque palette, puis emplacement)' : 'Rangement (produit, puis emplacement)' }}.</span></p>
+            } @else {
+              <p><ion-icon name="checkmark-done"></ion-icon><span>Les palettes sont déjà au stock.{{ aDesAutres() ? ' Rangez les cosses axiales et les connecteurs avec Rangement.' : '' }} L'import suivant pourra être reçu.</span></p>
+            }
           } @else {
             <p><ion-icon name="desktop-outline"></ion-icon><span>Le chef vérifie les réclamations et valide l'import sur le web.</span></p>
           }
@@ -394,6 +596,8 @@ interface ModeScan {
     .lignes .qte { font-size: 15px; color: var(--k-gris); }
     .lignes .qte b { color: var(--k-nuit); font-size: 18px; }
     .lignes li.complet .qte b { color: var(--k-vert); }
+    .lignes li.trop .qte b { color: var(--k-orange, #b86a00); }
+    .aide-pieces { margin: 8px 0 0; font-size: 13px; color: var(--k-gris); }
     .lien { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 700; color: var(--k-marine); background: var(--k-surface-2); border: 0; border-radius: 10px; }
     app-scanner { margin-bottom: 4px; }
 
@@ -473,18 +677,43 @@ interface ModeScan {
     .valider { --border-radius: 16px; min-height: 56px; margin: 0; font-size: 17px; font-weight: 800; }
     .k-btn-orange { --background: var(--k-orange); --background-activated: #b86600; --box-shadow: 0 16px 30px -18px rgba(217, 122, 0, 0.8); }
     .continuer { display: block; width: 100%; min-height: 50px; margin-top: 6px; font: inherit; font-size: 16px; font-weight: 700; color: var(--k-marine); background: none; border: 0; }
+    .modes-cosses { display: flex; gap: 0; margin-top: 12px; padding: 4px; background: var(--k-surface-2); border-radius: 16px; }
+    .modes-cosses.a-choisir { box-shadow: 0 0 0 3px var(--k-orange); }
+    .modes-cosses button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; font: inherit; font-size: 16px; font-weight: 800; color: var(--k-gris); background: none; border: 0; border-radius: 12px; }
+    .modes-cosses button ion-icon { font-size: 20px; }
+    .modes-cosses button.actif:first-child { color: #fff; background: var(--k-orange); }
+    .modes-cosses button.actif:last-child { color: #fff; background: var(--k-marine); }
+    .question-mode { margin: 12px 0 0; padding: 10px 12px; font-size: 14.5px; color: #7a4600; background: var(--k-orange-clair); border-radius: 12px; }
+    .aide-mode { display: block; margin: 6px 4px 0; color: var(--k-gris); font-size: 13px; }
+    .carton-ouvert { border: 2px solid var(--k-orange); }
+    .bandeau-palette { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 12px; background: linear-gradient(135deg, #13296b, var(--k-nuit)); border-radius: 18px; color: #fff; box-shadow: var(--k-ombre); }
+    .bandeau-palette .pastille-palette { background: rgba(255, 255, 255, 0.16); color: #fff; }
+    .bandeau-texte { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .bandeau-texte b { font-size: 16px; }
+    .bandeau-texte small { font-size: 12.5px; color: #cfd6ee; }
+    .bandeau-palette .compte-palette b { color: #fff; }
+    .bandeau-palette.descendue { background: linear-gradient(150deg, #f08a24, #b35600); }
+    .bandeau-palette.descendue .lien { color: #fff; font-weight: 800; }
+    .ouvrir-palette { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 10px; padding: 10px 12px; font: inherit; text-align: left; color: var(--k-marine); background: var(--k-surface); border: 2px dashed var(--k-bord); border-radius: 18px; }
+    .ouvrir-palette ion-icon { flex: none; font-size: 24px; }
+    .ouvrir-palette span { display: flex; flex-direction: column; }
+    .ouvrir-palette small { font-size: 12.5px; color: var(--k-gris); }
+    .liste-palettes .carton-de-palette { padding-left: 16px; border-top-style: dashed; }
     @keyframes monte { from { transform: translateY(100%); } to { transform: none; } }
     @keyframes fondu { from { opacity: 0; } to { opacity: 1; } }
   `,
 })
 export class ReceptionPage implements ViewWillEnter {
-  private controles = inject(ControlesService);
+  protected controles = inject(ControlesService);
   private retour = inject(RetourService);
   readonly navigation = inject(NavigationService);
   readonly etapes = ETAPES_IMPORT;
   readonly types = LIBELLES_TYPE;
   readonly TAILLES = TAILLES;
-  readonly libellesAnomalie = { manquant: 'Manquant', en_trop: 'Colis en trop', hors_import: 'Hors import' } as const;
+  readonly libellesAnomalie = {
+    manquant: 'Manquant', en_trop: 'Colis en trop', hors_import: 'Hors import', pieces_manquantes: 'Pièces manquantes', pieces_en_trop: 'Pièces en trop',
+  } as const;
+  readonly nombre = nombre;
 
   readonly imports = signal<ImportReception[]>([]);
   readonly chargement = signal(false);
@@ -505,6 +734,11 @@ export class ReceptionPage implements ViewWillEnter {
   // Réponse de « Terminer la palette » (motif de l'emplacement choisi, zone tampon)
   private readonly derniereTerminee = signal<PaletteReception | null>(null);
 
+  // Ticket faux (import par référence) : 1) QR du colis, 2) quantité réelle, 3) étiquette imprimée puis scannée
+
+
+  // Réception séparée (par défaut) : contrôle seulement, sans palette ; le rangement vient après la validation
+  readonly separee = computed(() => this.choisi()?.mode_reception !== 'palette');
   readonly palettes = computed(() => this.choisi()?.palettes ?? []);
   // Palette en cours : ouverte, ou terminée mais pas encore posée
   readonly paletteCourante = computed(() => {
@@ -514,18 +748,44 @@ export class ReceptionPage implements ViewWillEnter {
     const t = this.derniereTerminee();
     return t && t.id === p.id && t.statut === p.statut ? { ...p, tampon: t.tampon, motif: t.motif } : p;
   });
+  // Produits attendus : lignes de l'import, et pour un import par référence les références annoncées
+  // (leurs lignes par lot n'existent qu'après le scan du 1er colis)
+  private readonly attendus = computed(() => [...(this.choisi()?.lignes ?? []), ...(this.choisi()?.pieces?.references ?? [])]);
   // Connecteurs : sans palette ; bobines et cosses : palette par palette
-  readonly aDesAutres = computed(() => (this.choisi()?.lignes ?? []).some((l) => !surPalette(l)));
-  readonly aDesPalettes = computed(() => (this.choisi()?.lignes ?? []).some((l) => surPalette(l)));
+  readonly aDesAutres = computed(() => this.attendus().some((l) => !surPalette(l)));
+  readonly aDesPalettes = computed(() => this.attendus().some((l) => surPalette(l)));
+  // Cosses plates : mode « Cartons » ou « Séparées », gardé (par import) jusqu'au prochain changement
+  readonly modeCosses = signal<'carton' | 'separe' | null>(null);
+  // Connecteurs : 'place' = scanner l'étiquette de la palette à compléter ; 'remettre' = la remettre à sa place
+  readonly etapePalette = signal<'place' | 'remettre' | null>(null);
+  readonly aDesConnecteurs = computed(() => !!this.choisi()?.a_des_connecteurs || !!this.choisi()?.palette_descendue || this.attendus().some((l) => l.type === 'connecteur'));
+  // 1re cosse plate sans mode choisi : le scan attend la réponse
+  private readonly scanEnAttente = signal<Lecture | null>(null);
+  readonly questionMode = computed(() => !!this.scanEnAttente());
+  // Cosses plates attendues (elles peuvent arriver en cartons) ; un carton ouvert compte aussi
+  readonly aDesPlates = computed(() => !!this.choisi()?.carton_ouvert || this.attendus().some((l) => l.type === 'cosse'));
   // Tous les colis attendus sont reçus et aucune palette n'attend : il ne reste qu'à terminer
   readonly toutRecu = computed(() => {
     const i = this.choisi();
-    return !!i && i.avancement.attendus > 0 && i.avancement.recus >= i.avancement.attendus && !this.paletteCourante();
+    if (!i || this.paletteCourante()) return false;
+    // import par référence : chaque référence a au moins son total, à l'écart accepté près
+    if (i.pieces) return i.pieces.references.length > 0 && i.pieces.references.every((r) => ['conforme', 'tolere', 'en_trop'].includes(r.statut));
+    return i.avancement.attendus > 0 && i.avancement.recus >= i.avancement.attendus;
   });
 
   readonly mode = computed<ModeScan>(() => {
     const i = this.choisi();
     const p = this.paletteCourante();
+    const pd = i?.palette_descendue;
+    if (this.etapePalette() === 'place' && !pd) {
+      return { attendu: 'emplacement', cible: null, cibleTexte: '', compteur: null, consigne: 'Étiquette de la place de la palette à compléter' };
+    }
+    if (pd && this.etapePalette() === 'remettre') {
+      return { attendu: 'emplacement', cible: pd.emplacement, cibleTexte: 'Remettez-la en', compteur: `+${pd.a_ajouter ?? 0}`, consigne: `Étiquette de ${nomEmplacement(pd.emplacement)}` };
+    }
+    if (pd) {
+      return { attendu: 'ticket', cible: null, cibleTexte: '', compteur: `+${pd.a_ajouter ?? 0}`, consigne: `Carton à ajouter · palette de ${nomEmplacement(pd.emplacement)}` };
+    }
     if (p?.statut === 'ouverte') {
       return {
         attendu: 'ticket', cible: null, cibleTexte: '', compteur: p.capacite ? `${p.n}/${p.capacite}` : String(p.n),
@@ -533,26 +793,35 @@ export class ReceptionPage implements ViewWillEnter {
       };
     }
     if (p?.mode === 'entiere') {
-      return { attendu: 'emplacement', cible: p.emplacement, cibleTexte: 'Posez la palette en', compteur: `P${p.numero}`, consigne: `Étiquette de ${p.emplacement}` };
+      return { attendu: 'emplacement', cible: p.emplacement, cibleTexte: 'Posez la palette en', compteur: `P${p.numero}`, consigne: `Étiquette de ${nomEmplacement(p.emplacement)}` };
     }
     if (p) {
       const t = this.ticketDivise();
       const compteur = `${p.n - p.a_ranger}/${p.n}`;
       return t
-        ? { attendu: 'emplacement', cible: t.emplacement, cibleTexte: `Posez la ${this.nomColis(p, false)} en`, compteur, consigne: `Étiquette de ${t.emplacement}` }
+        ? { attendu: 'emplacement', cible: t.emplacement, cibleTexte: `Posez la ${this.nomColis(p, false)} en`, compteur, consigne: `Étiquette de ${nomEmplacement(t.emplacement)}` }
         : { attendu: 'ticket', cible: null, cibleTexte: '', compteur, consigne: `Ticket de la ${this.nomColis(p, false)} à ranger` };
     }
+    const k = i?.carton_ouvert;
+    if (k) {
+      const pal = i?.palette_ouverte;
+      return { attendu: 'ticket', cible: null, cibleTexte: '', compteur: `${pal ? 'P' + pal.numero + ' · ' : ''}C${k.numero} · ${k.cosses}`, consigne: `Cosse ${k.cosses + 1} · carton ${k.numero}${pal ? ' · palette ' + pal.numero : ''}` };
+    }
+    const pal = this.separee() ? i?.palette_ouverte : null;
+    if (pal) {
+      return { attendu: 'ticket', cible: null, cibleTexte: '', compteur: `P${pal.numero} · ${pal.cosses}`, consigne: `Ticket vert · palette ${pal.numero}` };
+    }
     return {
-      attendu: 'ticket', cible: null, cibleTexte: '', compteur: i ? `${i.avancement.recus}/${i.avancement.attendus}` : null,
-      consigne: this.toutRecu() ? 'Tout est reçu' : this.aDesPalettes() ? '1er colis de la palette suivante' : 'Ticket vert du produit',
+      attendu: 'ticket', cible: null, cibleTexte: '', compteur: i ? (i.pieces ? `${nombre(i.avancement.recus)}/${nombre(i.avancement.attendus)}` : `${i.avancement.recus}/${i.avancement.attendus}`) : null,
+      consigne: this.toutRecu() ? 'Tout est reçu' : !this.separee() && this.aDesPalettes() ? '1er colis de la palette suivante' : 'Ticket vert du produit',
     };
   });
 
   constructor() {
     addIcons({
-      cloudOfflineOutline, scanOutline, chevronForward, chevronDown, chevronUp, play, lockClosedOutline, checkmarkDone,
-      alertCircle, homeOutline, cubeOutline, flagOutline, removeCircle, addCircle, gridOutline, desktopOutline, closeOutline,
-      layersOutline, checkmarkCircle, refreshOutline, arrowForward,
+      arrowDown, cloudOfflineOutline, scanOutline, chevronForward, chevronDown, chevronUp, play, lockClosedOutline, checkmarkDone,
+      alertCircle, homeOutline, cubeOutline, flagOutline, removeCircle, addCircle, gridOutline, desktopOutline, closeOutline, downloadOutline,
+      layersOutline, checkmarkCircle, refreshOutline, arrowForward, createOutline, printOutline,
     });
   }
 
@@ -571,8 +840,8 @@ export class ReceptionPage implements ViewWillEnter {
   etatPalette(p: PaletteReception): string {
     if (p.statut === 'ouverte') return 'en cours';
     const un = this.nomColis(p, false);
-    if (p.statut === 'rangee') return p.mode === 'entiere' ? `rangée en ${p.emplacement}` : `rangée ${un} par ${un}`;
-    return p.mode === 'entiere' ? `à poser en ${p.emplacement}` : `à ranger (${this.compte({ ...p, n: p.a_ranger })})`;
+    if (p.statut === 'rangee') return p.mode === 'entiere' ? `rangée en ${nomEmplacement(p.emplacement)}` : `rangée ${un} par ${un}`;
+    return p.mode === 'entiere' ? `à poser en ${nomEmplacement(p.emplacement)}` : `à ranger (${this.compte({ ...p, n: p.a_ranger })})`;
   }
 
   // Ce que porte une palette : « bobines », « cosses » (« colis » tant que rien n'est scanné)
@@ -617,6 +886,8 @@ export class ReceptionPage implements ViewWillEnter {
     }
     this.erreur.set('');
     this.choisi.set(i);
+    this.modeCosses.set(lireMode(i.id));
+    this.scanEnAttente.set(null);
     this.fin.set(null);
     this.termine.set(false);
     this.resultat.set(null);
@@ -700,12 +971,6 @@ export class ReceptionPage implements ViewWillEnter {
     if (p) void this.agir(() => this.controles.annulerPalette(p.id));
   }
 
-  retirer(p: PaletteReception, controleId: number): void {
-    void this.agir(async () => {
-      await this.controles.retirerBobine(p.id, controleId);
-      this.resultat.set(null);
-    }, 'Colis non retiré');
-  }
 
   terminerPalette(): void {
     const p = this.paletteCourante();
@@ -722,36 +987,66 @@ export class ReceptionPage implements ViewWillEnter {
       ...erreurLocale(new HttpErrorResponse({ status: 200 })),
       resultat: 'palette_terminee', couleur: entiere && !t.tampon ? 'vert' : 'orange', titre: `Palette ${t.numero} terminée`,
       message: entiere
-        ? `Posez-la en ${t.emplacement}${t.tampon ? ` (zone tampon : plus d’emplacement vide ${this.niveaux(t)})` : ''}, puis scannez l'étiquette.`
+        ? `Posez-la en ${nomEmplacement(t.emplacement)}${t.tampon ? ` (zone tampon : plus d’emplacement vide ${this.niveaux(t)})` : ''}, puis scannez l'étiquette.`
         : `Pas d'emplacement vide : rangez ${t.n > 1 ? 'ses ' + this.compte(t) + ' une par une' : 'sa ' + this.nomColis(t, false)} (ticket, puis emplacement).`,
       emplacements_prevus: entiere && t.emplacement ? [{ code: t.emplacement, quantite: t.n }] : [],
     });
     this.retour.signaler(entiere && !t.tampon ? 'vert' : 'orange');
   }
 
-  rouvrir(p: PaletteReception): void {
-    void this.agir(async () => {
-      await this.controles.rouvrirPalette(p.id);
-      this.resultat.set(null);
-    }, 'Palette non rouverte');
-  }
 
   // Un seul point d'entrée pour la caméra : l'étape en cours décide de ce que veut dire le QR
   lire(l: Lecture): void {
+    const pd = this.choisi()?.palette_descendue;
+    if (this.etapePalette() === 'place' && !pd) return void this.completer(l);
+    if (pd && this.etapePalette() === 'remettre') return void this.remettre(pd, l);
     const p = this.paletteCourante();
     if (p?.statut === 'ouverte') void this.scanner(l, p.id);
     else if (p?.mode === 'entiere') void this.poser(p, l);
     else if (p) {
       if (this.ticketDivise()) void this.rangerDivise(l);
       else this.lireTicketDivise(p, l);
-    } else if (this.estSurPalette(l.texte)) void this.scanner(l, 'nouvelle');
+    } else if (!this.separee() && this.estSurPalette(l.texte)) void this.scanner(l, 'nouvelle');
     else void this.scanner(l);
+  }
+
+  // Le ticket peut-il être une cosse ? (référence de cosse de l'import, ou référence inconnue : hors import)
+  private peutEtreCosse(qr: string): boolean {
+    const { reference } = referenceEtLot(qr);
+    const ligne = this.attendus().find((x) => x.reference.toUpperCase() === reference);
+    return !ligne || ligne.type === 'cosse';
+  }
+
+  // Résultat d'une action carton / palette : faite (vert) ou gardée sur le téléphone (orange, pas de réseau)
+  private resultatAction(r: { garde: boolean; message?: string }, titreFait: string, titreGarde: string, messageGarde: string, couleur: 'vert' | 'orange' = 'vert'): void {
+    const garde = r.garde;
+    this.resultat.set({
+      ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: garde ? 'en_attente' : 'conforme', couleur: garde ? 'orange' : couleur,
+      titre: garde ? titreGarde : titreFait, message: garde ? `${messageGarde} ${this.controles.attente().length} opération(s) en attente.` : (r.message ?? ''),
+    });
+    this.retour.signaler(garde ? 'orange' : couleur);
+  }
+
+  // Bande affichée quand le réseau est coupé : ticket gardé sur le téléphone (orange), ou déjà gardé (rouge)
+  private resultatGarde(qr: string, deja: boolean): ResultatControle {
+    const { reference, lot } = referenceEtLot(qr);
+    const colis = qr.split(';').length === 5 ? Number(qr.split(';')[2]) : null;
+    const quoi = `${reference}${lot ? ' lot ' + lot : ''}${colis ? ' · colis n° ' + colis : ''}`;
+    const n = this.controles.attente().length;
+    return {
+      ...erreurLocale(new HttpErrorResponse({ status: 200 })),
+      resultat: deja ? 'deja_traite' : 'en_attente', couleur: deja ? 'rouge' : 'orange',
+      titre: deja ? 'Déjà scanné (gardé sur le téléphone)' : 'Scanné ✓ · gardé sur le téléphone',
+      message: deja
+        ? `${quoi} est déjà scanné et attend le Wi-Fi : ne le scannez pas deux fois. ${n} scan(s) en attente.`
+        : `${quoi} : pas de réseau, le scan est enregistré sur le téléphone et partira tout seul au retour du Wi-Fi. ${n} scan(s) en attente.`,
+    };
   }
 
   // Le ticket est-il celui d'une bobine ou d'une cosse de l'import ? (il se reçoit alors sur une palette)
   private estSurPalette(texte: string): boolean {
     const { reference } = referenceEtLot(texte);
-    return (this.choisi()?.lignes ?? []).some((x) => surPalette(x) && x.reference.toUpperCase() === reference);
+    return this.attendus().some((x) => surPalette(x) && x.reference.toUpperCase() === reference);
   }
 
   // Scan d'une bobine ou d'une cosse sur une palette (ouverte toute seule si besoin), ou d'un connecteur (sans palette)
@@ -777,16 +1072,39 @@ export class ReceptionPage implements ViewWillEnter {
           }
         }
       } else {
-        const r = await this.controles.reception(l.texte, l.manuel, i.id);
+        // Cosse sans mode choisi : « Cartons ou Séparées ? » posée par le téléphone (marche aussi sans réseau)
+        if (this.separee() && this.aDesPlates() && !this.modeCosses() && this.peutEtreCosse(l.texte)) {
+          this.scanEnAttente.set(l);
+          this.resultat.set(null);
+          this.retour.signaler('orange');
+          return;
+        }
+        // Ticket déjà gardé pendant la coupure : on le dit, sans le garder deux fois
+        if (this.controles.dejaEnAttente(l.texte, i.id)) {
+          this.resultat.set(this.resultatGarde(l.texte, true));
+          this.retour.signaler('rouge');
+          return;
+        }
+        const r = await this.controles.reception(l.texte, l.manuel, i.id, this.modeCosses() ?? undefined);
         if (r.etat === 'fait') this.afficher(r.resultat);
         else {
+          // Pas de réseau : le ticket est bien scanné et gardé ; la bande orange le dit tout de suite
           this.enAttente.set(r.operation);
+          this.resultat.set(this.resultatGarde(l.texte, false));
           this.retour.signaler('orange');
         }
       }
     } catch (e) {
-      this.resultat.set(erreurLocale(e as HttpErrorResponse));
-      this.retour.signaler('rouge');
+      const err = e as HttpErrorResponse;
+      if (err.error?.code === 'emballage_requis') {
+        // 1re cosse plate sans mode : « Cartons ou Séparées ? », puis ce scan continue
+        this.scanEnAttente.set(l);
+        this.resultat.set(null);
+        this.retour.signaler('orange');
+      } else {
+        this.resultat.set(erreurLocale(err));
+        this.retour.signaler('rouge');
+      }
     } finally {
       this.envoi.set(false);
       await this.rafraichir();
@@ -863,8 +1181,119 @@ export class ReceptionPage implements ViewWillEnter {
     return Math.max(0, i.avancement.attendus - i.avancement.recus);
   }
 
+  // ---------- Cartons de cosses ----------
+  // Bouton Cartons / Séparées. En passant en Séparées, le carton ouvert est terminé (il pourra être rouvert).
+  async changerMode(mode: 'carton' | 'separe'): Promise<void> {
+    const i = this.choisi();
+    if (!i) return;
+    const ouvert = i.carton_ouvert;
+    // sans réseau, des cosses gardées ont peut-être ouvert un carton : il sera terminé au retour du Wi-Fi
+    const coupure = !navigator.onLine || this.controles.attente().length > 0;
+    if (mode === 'separe' && (ouvert || (coupure && this.modeCosses() === 'carton'))) {
+      let fait = false;
+      await this.agir(async () => {
+        const r = await this.controles.actionReception('/mobile/cartons/terminer-ouvert', i.id, 'Terminer le carton ouvert');
+        fait = true;
+        this.resultatAction(r, ouvert ? `Carton ${ouvert.numero} terminé` : 'Carton terminé', 'Mode Séparées · carton gardé',
+          'Pas de réseau : le carton ouvert sera terminé au retour du Wi-Fi, avant les cosses séparées scannées ensuite.');
+      }, 'Carton non terminé');
+      if (!fait) return; // le carton n'a pas pu être terminé : on reste en Cartons
+    }
+    this.modeCosses.set(mode);
+    ecrireMode(i.id, mode);
+    const attente = this.scanEnAttente();
+    this.scanEnAttente.set(null);
+    if (attente) void this.scanner(attente); // le scan qui attendait la réponse continue
+  }
+
+
+
+  terminerCarton(): void {
+    const i = this.choisi();
+    const k = i?.carton_ouvert;
+    if (!i || !k) return;
+    void this.agir(async () => {
+      const r = await this.controles.actionReception('/mobile/cartons/terminer-ouvert', i.id, 'Terminer le carton ouvert');
+      this.resultatAction(r, `Carton ${k.numero} terminé`, 'Fin du carton gardée sur le téléphone',
+        'Pas de réseau : le carton sera terminé au retour du Wi-Fi ; la prochaine cosse ouvrira le carton suivant.');
+    }, 'Carton non terminé');
+  }
+
+
+
+  // ---------- Palettes de cosses ----------
+  ouvrirPaletteCosses(): void {
+    const i = this.choisi();
+    if (!i) return;
+    void this.agir(async () => {
+      const r = await this.controles.ouvrirPaletteCosses(i.id);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'conforme', couleur: 'vert', titre: 'Palette ouverte', message: r.message });
+      this.retour.signaler('vert');
+    }, 'Palette non ouverte');
+  }
+
+  // Termine la palette (et son carton ouvert) ; la suivante s'ouvre au prochain carton
+  terminerPaletteCosses(): void {
+    const i = this.choisi();
+    const p = i?.palette_ouverte;
+    if (!i || !p) return;
+    void this.agir(async () => {
+      const r = await this.controles.actionReception('/mobile/palettes-cosses/terminer-ouverte', i.id, 'Terminer la palette ouverte');
+      this.resultatAction(r, `Palette ${p.numero} terminée`, 'Fin de palette gardée sur le téléphone',
+        'Pas de réseau : la palette sera terminée au retour du Wi-Fi ; le prochain carton ouvrira la palette suivante.');
+    }, 'Palette non terminée');
+  }
+
+  // Palette de connecteurs du magasin : scan de l'étiquette de sa place → elle est descendue pour être complétée
+  private completer(l: Lecture): void {
+    const i = this.choisi();
+    if (!i) return;
+    this.retour.lu();
+    void this.agir(async () => {
+      const r = await this.controles.completerPalette(i.id, codeEmplacement(l.texte));
+      this.etapePalette.set(null);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'conforme', couleur: 'vert', titre: 'Palette descendue', message: r.message });
+      this.retour.signaler('vert');
+    }, 'Palette non descendue');
+  }
+
+  // La palette complétée est remise à sa place : scan de la même étiquette
+  private remettre(pd: PaletteCossesReception, l: Lecture): void {
+    this.retour.lu();
+    void this.agir(async () => {
+      const r = await this.controles.remettrePalette(pd.id, codeEmplacement(l.texte));
+      this.etapePalette.set(null);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'bon_emplacement', couleur: 'vert', titre: 'Palette remise à sa place', message: r.message });
+      this.retour.signaler('vert');
+    }, 'Pas sa place');
+  }
+
+
+  etatPaletteCosses(p: PaletteCossesReception): string {
+    if (p.statut === 'ouverte') return p.ouverte_par_moi ? 'en cours' : 'en cours (autre magasinier)';
+    if (p.statut === 'rangee') return `rangée en ${nomEmplacement(p.emplacement)}`;
+    return p.etiquettes_a_imprimer ? `${p.etiquettes_a_imprimer} étiquette(s) de carton à imprimer (web), puis à ranger` : 'à ranger (étiquette d’un carton, puis emplacement)';
+  }
+
+  etatCarton(k: CartonReception): string {
+    if (k.statut === 'ouvert') return 'en cours';
+    if (k.statut === 'range') return `rangé en ${nomEmplacement(k.emplacement)}`;
+    return k.imprime ? 'étiquette imprimée : à ranger' : 'étiquette à imprimer (web)';
+  }
+
   sansEcart(i: ImportReception): boolean {
+    if (i.pieces) return !i.pieces.a_reclamer && !i.avancement.hors_import;
     return this.manquants(i) === 0 && !i.avancement.en_trop && !i.avancement.hors_import;
+  }
+
+  // Import par référence : références en écart (une réclamation en pièces sera créée)
+  horsTolerance(i: ImportReception): ReferenceAttendue[] {
+    return (i.pieces?.references ?? []).filter((r) => ['manquant', 'non_recue', 'en_trop'].includes(r.statut));
+  }
+
+  // « 202613167 ×8, 202613168 ×1 »
+  lotsTexte(r: ReferenceAttendue): string {
+    return r.lots.map((l) => `${l.lot} ×${l.colis}`).join(', ');
   }
 
   private async terminer(): Promise<void> {
@@ -884,6 +1313,24 @@ export class ReceptionPage implements ViewWillEnter {
 }
 
 // Refus de l'API (ex. 400) affiché comme un résultat rouge
+// Mode des cosses plates (Cartons / Séparées), gardé sur le téléphone pour chaque import
+const CLE_MODE = (importId: number) => `kablem_mode_cosses_${importId}`;
+function lireMode(importId: number): 'carton' | 'separe' | null {
+  try {
+    const m = localStorage.getItem(CLE_MODE(importId));
+    return m === 'carton' || m === 'separe' ? m : null;
+  } catch {
+    return null;
+  }
+}
+function ecrireMode(importId: number, mode: 'carton' | 'separe'): void {
+  try {
+    localStorage.setItem(CLE_MODE(importId), mode);
+  } catch {
+    // stockage indisponible : le mode reste pour cette session
+  }
+}
+
 export function erreurLocale(err: HttpErrorResponse): ResultatControle {
   return {
     uuid: '', controle: 'reception', resultat: 'erreur', couleur: 'rouge', titre: 'Contrôle impossible',

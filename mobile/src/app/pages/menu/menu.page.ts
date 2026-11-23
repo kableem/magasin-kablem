@@ -2,7 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { IonContent, IonIcon, ViewWillEnter } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { arrowDown, arrowUp, chevronForward, logOutOutline, cloudOfflineOutline, sparklesOutline, clipboardOutline } from 'ionicons/icons';
+import { arrowDown, arrowUp, chevronForward, logOutOutline, cloudOfflineOutline, sparklesOutline, flash } from 'ionicons/icons';
 import { AuthService } from '../../services/auth.service';
 import { ControlesService } from '../../services/controles.service';
 import { ControleResume, LIBELLES_ROLES } from '../../services/modeles';
@@ -54,6 +54,15 @@ import { ControleResume, LIBELLES_ROLES } from '../../services/modeles';
           </span>
           <ion-icon class="fleche" name="chevron-forward"></ion-icon>
         </a>
+        <a class="carte urgence k-apparait" routerLink="/urgence" style="animation-delay: 90ms">
+          <span class="bulle"><ion-icon name="flash"></ion-icon></span>
+          <span class="texte">
+            <strong>Sortie urgente</strong>
+            <small>La production attend : pendant la réception</small>
+            <span class="etapes"><i>Ticket</i><i>Poser près de la porte</i><i>Sortir</i></span>
+          </span>
+          <ion-icon class="fleche" name="chevron-forward"></ion-icon>
+        </a>
         <a class="carte ranger k-apparait" routerLink="/ranger" style="animation-delay: 120ms">
           <span class="bulle"><ion-icon name="sparkles-outline"></ion-icon></span>
           <span class="texte">
@@ -63,16 +72,6 @@ import { ControleResume, LIBELLES_ROLES } from '../../services/modeles';
           </span>
           <ion-icon class="fleche" name="chevron-forward"></ion-icon>
         </a>
-        @if (gestionnaire()) {
-          <a class="carte inventaire k-apparait" routerLink="/inventaire" style="animation-delay: 180ms">
-            <span class="bulle"><ion-icon name="clipboard-outline"></ion-icon></span>
-            <span class="texte">
-              <strong>Inventaire</strong>
-              <small>Compter le stock réel, emplacement par emplacement</small>
-            </span>
-            <ion-icon class="fleche" name="chevron-forward"></ion-icon>
-          </a>
-        }
       </nav>
 
       @if (!enLigne()) {
@@ -113,13 +112,14 @@ import { ControleResume, LIBELLES_ROLES } from '../../services/modeles';
     .etapes i { padding: 2px 9px; font-style: normal; font-size: 12px; font-weight: 700; border-radius: 999px; }
     .import .etapes i { color: var(--k-marine); background: var(--k-surface-2); }
     .export .etapes i { background: rgba(255, 255, 255, 0.18); }
+    .urgence { min-height: 104px; color: var(--k-nuit); background: #fff4f3; border: 2px solid #f6c3bf; }
+    .urgence .bulle { color: #fff; background: var(--k-degrade-rouge); }
+    .urgence .texte strong { font-size: 23px; color: var(--k-rouge-fonce); }
+    .urgence .etapes i { color: var(--k-rouge-fonce); background: #ffe1de; }
     .ranger { min-height: 104px; color: var(--k-nuit); background: var(--k-vert-clair); border: 1px solid #bfe6cf; }
     .ranger .bulle { color: #fff; background: var(--k-vert); }
     .ranger .texte strong { font-size: 23px; }
     .ranger .etapes i { color: var(--k-vert); background: var(--k-surface); }
-    .inventaire { min-height: 92px; color: var(--k-nuit); background: var(--k-surface); border: 1px dashed var(--k-bord); }
-    .inventaire .bulle { width: 56px; height: 56px; font-size: 28px; color: var(--k-marine); background: var(--k-surface-2); }
-    .inventaire .texte strong { font-size: 22px; }
     .fleche { flex: none; font-size: 26px; opacity: 0.55; }
     .hors-ligne { display: flex; align-items: center; gap: 8px; margin: 16px 18px 0; padding: 12px 14px; font-weight: 600; color: #7a4a00; background: var(--k-orange-clair); border-radius: 14px; }
     .signature { margin: 26px 0 calc(18px + var(--ion-safe-area-bottom, 0px)); text-align: center; font-size: 13px; color: var(--k-gris); }
@@ -129,8 +129,6 @@ export class MenuPage implements ViewWillEnter {
   readonly auth = inject(AuthService);
   readonly controles = inject(ControlesService);
   readonly roles = LIBELLES_ROLES;
-  // Inventaire : chef de magasin et administrateur
-  readonly gestionnaire = computed(() => ['admin', 'chef_magasin'].includes(this.auth.session()?.utilisateur.role ?? ''));
   readonly mesControles = signal<ControleResume[]>([]);
   readonly enLigne = signal(navigator.onLine);
   readonly salutation = new Date().getHours() < 18 ? 'Bonjour' : 'Bonsoir';
@@ -143,7 +141,7 @@ export class MenuPage implements ViewWillEnter {
   readonly nbAlertes = computed(() => this.duJour().filter((c) => c.couleur !== 'vert').length);
 
   constructor() {
-    addIcons({ sparklesOutline, clipboardOutline, arrowDown, arrowUp, chevronForward, logOutOutline, cloudOfflineOutline });
+    addIcons({ sparklesOutline, arrowDown, arrowUp, chevronForward, logOutOutline, cloudOfflineOutline, flash });
     window.addEventListener('online', () => this.enLigne.set(true));
     window.addEventListener('offline', () => this.enLigne.set(false));
   }

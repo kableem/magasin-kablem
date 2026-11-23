@@ -95,9 +95,14 @@ export class Reclamations implements OnInit {
   readonly parMotif = computed(() =>
     this.motifs.map((m) => ({
       ...m,
+      // colis et produits ; les écarts en pièces (import résumé) sont comptés à part
       quantite: this.imports()
         .flatMap((i) => i.produits)
-        .filter((p) => p.motif === m.valeur)
+        .filter((p) => p.motif === m.valeur && p.unite !== 'pieces')
+        .reduce((s, p) => s + p.quantite, 0),
+      pieces: this.imports()
+        .flatMap((i) => i.produits)
+        .filter((p) => p.motif === m.valeur && p.unite === 'pieces')
         .reduce((s, p) => s + p.quantite, 0),
     }))
   );

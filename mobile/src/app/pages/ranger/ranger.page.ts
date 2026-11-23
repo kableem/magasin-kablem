@@ -1,3 +1,4 @@
+import { nomEmplacement } from '../../services/plan';
 import { Component, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -5,7 +6,7 @@ import { IonButton, IonContent, IonFooter, IonIcon, IonSpinner, IonToolbar, View
 import { addIcons } from 'ionicons';
 import {
   arrowForward, barcodeOutline, checkmarkCircle, closeOutline, layersOutline, locationOutline, flagOutline, refreshOutline,
-  shieldCheckmarkOutline, sparklesOutline,
+  shieldCheckmarkOutline, sparklesOutline, cubeOutline,
 } from 'ionicons/icons';
 import { Lecture, ScannerComponent } from '../../composants/scanner.component';
 import { EnteteComponent } from '../../composants/entete.component';
@@ -18,12 +19,16 @@ import {
 import { erreurLocale } from '../reception/reception.page';
 import { EmplPipe } from '../../composants/empl.pipe';
 
-type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
+type Etape = 'debut' | 'depart' | 'produit' | 'arrivee' | 'cartons';
+
+// Carton de cosses en main (étiquette scannée) : il part avec les autres à l'arrivée scannée
+interface CartonEnMain { qr: string; numero: number; reference: string; lot: string; cosses: number; ici: string; palette: number }
 
 // « Ranger le magasin » : le magasinier range librement, sans suggestion du système.
 // Il scanne le produit (ticket), l'emplacement où il le prend, puis l'emplacement d'arrivée de son choix ;
 // il peut aussi commencer par l'étiquette d'un emplacement (puis un produit de cet emplacement, ou toute
-// la palette). L'API contrôle chaque déplacement (le produit est bien là, l'arrivée respecte les règles du
+// la palette). Cartons de cosses : l'étiquette d'un ou de plusieurs cartons, puis l'arrivée (une palette du haut,
+// un emplacement vide du haut ou la zone tampon). L'API contrôle chaque déplacement (le produit est bien là, l'arrivée respecte les règles du
 // magasin) et l'enregistre avec son matricule ; les refus sont notés aussi.
 @Component({
   selector: 'app-ranger',
@@ -40,16 +45,18 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
         [cibleTexte]="mode().cibleTexte"
         [compteur]="mode().compteur"
         [resultat]="resultat()"
-        [libelleManuel]="mode().attendu === 'emplacement' ? 'Code de l\\'emplacement' : 'Ticket ou emplacement'"
-        [exempleManuel]="mode().attendu === 'emplacement' ? 'ex. D012' : 'ex. F0391;13000;10;202613167;1'"
         (lecture)="lire($event)"
       ></app-scanner>
 
       <!-- Le trajet : produit → départ → arrivée, rempli au fil des scans -->
       <section class="trajet k-carte" [attr.data-etape]="etape()">
-        <div class="pas" [class.fait]="produit() || toutePalette()" [class.actif]="etape() === 'debut' || etape() === 'produit'">
+        <div class="pas" [class.fait]="produit() || toutePalette() || cartons().length" [class.actif]="etape() === 'debut' || etape() === 'produit'">
           <small>Produit</small>
-          @if (toutePalette() && depart(); as d) {
+          @if (cartons().length) {
+            <span class="icone"><ion-icon name="cube-outline"></ion-icon></span>
+            <b>{{ cartons().length }} carton{{ cartons().length > 1 ? 's' : '' }}</b>
+            <em>{{ cossesEnMain() }} cosse{{ cossesEnMain() > 1 ? 's' : '' }}</em>
+          } @else if (toutePalette() && depart(); as d) {
             <span class="icone"><ion-icon name="layers-outline"></ion-icon></span>
             <b>Toute la palette</b>
             <em>{{ d.remplissage.libelle }}</em>
@@ -62,9 +69,12 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
           }
         </div>
         <ion-icon class="fleche" name="arrow-forward"></ion-icon>
-        <div class="pas" [class.fait]="depart()" [class.actif]="etape() === 'depart'">
+        <div class="pas" [class.fait]="depart() || cartons().length" [class.actif]="etape() === 'depart'">
           <small>Départ</small>
-          @if (depart(); as d) {
+          @if (cartons().length) {
+            <span class="k-etiquette">{{ departsCartons()[0] | empl }}</span>
+            <em>{{ departsCartons().length > 1 ? '+ ' + (departsCartons().length - 1) + ' autre' + (departsCartons().length > 2 ? 's' : '') : 'palette n° ' + cartons()[0].palette }}</em>
+          } @else if (depart(); as d) {
             <span class="k-etiquette">{{ d.code | empl }}</span>
             <em>{{ d.remplissage.libelle }}</em>
           } @else {
@@ -73,7 +83,7 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
           }
         </div>
         <ion-icon class="fleche" name="arrow-forward"></ion-icon>
-        <div class="pas" [class.actif]="etape() === 'arrivee'">
+        <div class="pas" [class.actif]="etape() === 'arrivee' || etape() === 'cartons'">
           <small>Arrivée</small>
           <span class="icone vide"><ion-icon name="flag-outline"></ion-icon></span>
           <em>Au choix</em>
@@ -81,12 +91,26 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
       </section>
 
       <!-- Ce qu'il faut savoir à l'étape en cours -->
-      @if (etape() === 'depart' && produit(); as p) {
+      @if (etape() === 'cartons') {
+        <section class="info k-carte k-apparait">
+          <p>Scannez <b>d'autres cartons</b> si vous en prenez plusieurs, puis <b>l'étiquette de l'arrivée</b> : une palette du haut (ils s'y ajoutent), un emplacement vide du haut (nouvelle palette) ou la zone tampon.</p>
+          <ul class="cartons">
+            @for (k of cartons(); track k.qr) {
+              <li class="k-apparait">
+                <span class="icone"><ion-icon name="cube-outline"></ion-icon></span>
+                <span class="quoi"><b>Carton n° {{ k.numero }} · <span class="mono">{{ k.reference }}</span></b><small>lot {{ k.lot }} · {{ k.cosses }} cosse{{ k.cosses > 1 ? 's' : '' }} · palette n° {{ k.palette }}</small></span>
+                <span class="k-etiquette petite">{{ k.ici | empl }}</span>
+                <button type="button" class="retirer" [disabled]="envoi()" (click)="retirerCarton(k)" aria-label="Retirer ce carton"><ion-icon name="close-outline"></ion-icon></button>
+              </li>
+            }
+          </ul>
+        </section>
+      } @else if (etape() === 'depart' && produit(); as p) {
         <section class="info k-carte k-apparait">
           <p>
             <b class="mono">{{ p.info.reference }}</b> lot {{ p.info.lot }}{{ p.info.colis ? ' · colis ' + p.info.colis : '' }}
             @if (p.info.ici) {
-              est en <span class="k-etiquette">{{ p.info.ici }}</span> : scannez cette étiquette.
+              est en <span class="k-etiquette">{{ p.info.ici | empl }}</span> : scannez cette étiquette.
             } @else {
               est en stock en :
             }
@@ -119,7 +143,7 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
       } @else if (etape() === 'debut' && !resultat()) {
         <section class="info k-carte">
           <ion-icon name="sparkles-outline"></ion-icon>
-          <p>Libérez des emplacements à votre façon : <b>ticket du produit</b>, <b>emplacement où vous le prenez</b>, puis <b>emplacement d'arrivée</b>. Chaque déplacement est contrôlé et enregistré avec votre matricule.</p>
+          <p>Libérez des emplacements à votre façon : <b>ticket du produit</b>, <b>emplacement où vous le prenez</b>, puis <b>emplacement d'arrivée</b>. Cartons de cosses : <b>l'étiquette de chaque carton</b>, puis <b>l'arrivée</b>. Chaque déplacement est contrôlé et enregistré avec votre matricule.</p>
         </section>
       }
 
@@ -142,12 +166,12 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
                     <small>{{ m.commentaire ?? (m.colis ? 'colis ' + m.colis : 'lot ' + m.lot) }}{{ m.quantite > 1 ? ' · ×' + m.quantite : '' }}</small>
                   </span>
                   <span class="chemin">
-                    <span class="k-etiquette petite" [class.libre]="m.depuis_liberee">{{ m.depuis }}</span>
+                    <span class="k-etiquette petite" [class.libre]="m.depuis_liberee">{{ m.depuis | empl }}</span>
                     <ion-icon name="arrow-forward"></ion-icon>
-                    <span class="k-etiquette petite">{{ m.vers }}</span>
+                    <span class="k-etiquette petite">{{ m.vers | empl }}</span>
                   </span>
                   @if (m.depuis_liberee) {
-                    <span class="libere"><ion-icon name="checkmark-circle"></ion-icon>{{ m.depuis }} libéré</span>
+                    <span class="libere"><ion-icon name="checkmark-circle"></ion-icon>{{ m.depuis | empl }} libéré</span>
                   }
                 </li>
               }
@@ -166,6 +190,11 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
         <ion-toolbar>
           <div class="actions">
             <ion-button class="k-btn-clair" [disabled]="envoi()" (click)="recommencer()"><ion-icon slot="start" name="close-outline"></ion-icon>Annuler</ion-button>
+            @if (etape() === 'cartons' && cartons().length === 1) {
+              <ion-button expand="block" class="k-btn-principal large" [disabled]="envoi() || lecture()" (click)="paletteDuCarton()">
+                <ion-icon slot="start" name="layers-outline"></ion-icon>Toute sa palette
+              </ion-button>
+            }
             @if (etape() === 'produit' && depart()?.remplissage?.n) {
               <ion-button expand="block" class="k-btn-principal large" [disabled]="envoi()" (click)="choisirToutePalette()">
                 <ion-icon slot="start" name="layers-outline"></ion-icon>Toute la palette
@@ -220,6 +249,11 @@ type Etape = 'debut' | 'depart' | 'produit' | 'arrivee';
     .libere { grid-column: 2 / 4; display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; color: var(--k-vert); }
     .vide { margin: 0; padding: 14px; text-align: center; color: var(--k-gris); background: var(--k-surface); border: 1px dashed var(--k-bord); border-radius: 14px; }
 
+    .cartons { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .cartons li { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px; padding: 8px 10px; background: var(--k-surface-2); border-radius: 12px; }
+    .cartons .icone { display: grid; place-items: center; width: 32px; height: 32px; font-size: 18px; color: #fff; background: var(--k-marine); border-radius: 10px; }
+    .cartons .quoi b { font-size: 14px; }
+    .retirer { display: grid; place-items: center; width: 36px; height: 36px; font-size: 20px; color: var(--k-erreur); background: none; border: 0; }
     .actions { display: flex; gap: 10px; }
     .actions ion-button { margin: 0; min-height: 52px; }
     .actions .large { flex: 1; }
@@ -235,6 +269,9 @@ export class RangerPage implements ViewWillEnter {
   // Le magasinier a commencé par l'étiquette : le départ reste choisi pour les produits suivants
   readonly departEnPremier = signal(false);
   readonly toutePalette = signal(false);
+  readonly cartons = signal<CartonEnMain[]>([]); // cartons de cosses en main
+  readonly cossesEnMain = computed(() => this.cartons().reduce((t, k) => t + k.cosses, 0));
+  readonly departsCartons = computed(() => [...new Set(this.cartons().map((k) => k.ici))]);
   readonly resultat = signal<ResultatControle | null>(null);
   readonly journal = signal<MesDeplacements | null>(null);
   readonly chargement = signal(false);
@@ -242,6 +279,7 @@ export class RangerPage implements ViewWillEnter {
   readonly lecture = signal(false); // produit ou emplacement en cours de lecture
 
   readonly etape = computed<Etape>(() => {
+    if (this.cartons().length) return 'cartons';
     const d = this.depart();
     if (d && (this.produit() || this.toutePalette())) return 'arrivee';
     if (this.produit()) return 'depart';
@@ -250,7 +288,8 @@ export class RangerPage implements ViewWillEnter {
 
   // Produit en main, pas encore posé : rien n'est enregistré
   readonly enMain = computed(() =>
-    this.etape() === 'arrivee' ? "Le déplacement commencé n'est pas enregistré : remettez le produit à son emplacement de départ." : null
+    this.etape() === 'cartons' ? "Les cartons en main ne sont pas encore déplacés : remettez-les à leur place, ou scannez l'arrivée."
+      : this.etape() === 'arrivee' ? "Le déplacement commencé n'est pas enregistré : remettez le produit à son emplacement de départ." : null
   );
 
   readonly mode = computed(() => {
@@ -262,9 +301,11 @@ export class RangerPage implements ViewWillEnter {
         return { attendu: 'emplacement' as const, consigne: `Étiquette de l'emplacement de ${p?.reference ?? 'ce produit'}`, cible, cibleTexte: 'Prenez-le en', compteur: null };
       }
       case 'produit':
-        return { attendu: 'tout' as const, consigne: `Ticket du produit pris en ${d?.code}`, cible: null, cibleTexte: '', compteur: d?.code ?? null };
+        return { attendu: 'tout' as const, consigne: `Ticket du produit pris en ${nomEmplacement(d?.code)}`, cible: null, cibleTexte: '', compteur: d ? nomEmplacement(d.code) : null };
+      case 'cartons':
+        return { attendu: 'tout' as const, consigne: "Autre carton, ou étiquette de l'arrivée", cible: null, cibleTexte: '', compteur: `${this.cartons().length} carton${this.cartons().length > 1 ? 's' : ''}` };
       case 'arrivee':
-        return { attendu: 'emplacement' as const, consigne: "Étiquette de l'emplacement d'arrivée", cible: null, cibleTexte: '', compteur: d ? `${d.code} →` : null };
+        return { attendu: 'emplacement' as const, consigne: "Étiquette de l'emplacement d'arrivée", cible: null, cibleTexte: '', compteur: d ? `${nomEmplacement(d.code)} →` : null };
       default:
         return { attendu: 'tout' as const, consigne: 'Ticket du produit ou étiquette de son emplacement', cible: null, cibleTexte: '', compteur: null };
     }
@@ -273,7 +314,7 @@ export class RangerPage implements ViewWillEnter {
   constructor() {
     addIcons({
       arrowForward, barcodeOutline, checkmarkCircle, closeOutline, layersOutline, locationOutline, flagOutline, refreshOutline,
-      shieldCheckmarkOutline, sparklesOutline,
+      shieldCheckmarkOutline, sparklesOutline, cubeOutline,
     });
   }
 
@@ -302,6 +343,10 @@ export class RangerPage implements ViewWillEnter {
     if (this.envoi() || this.lecture()) return;
     const emplacement = estCodeEmplacement(l.texte);
     switch (this.etape()) {
+      case 'cartons':
+        if (emplacement) void this.poserCartons(l);
+        else void this.choisirProduit(l);
+        break;
       case 'arrivee':
         // un autre ticket : on change de produit (même départ si on a commencé par l'étiquette)
         if (emplacement) void this.poser(l);
@@ -320,7 +365,8 @@ export class RangerPage implements ViewWillEnter {
   // « Retour » et retour du téléphone : une étape en arrière
   precedent(): void {
     this.resultat.set(null);
-    if (this.etape() === 'arrivee') {
+    if (this.etape() === 'cartons') this.cartons.update((l) => l.slice(0, -1));
+    else if (this.etape() === 'arrivee') {
       if (this.toutePalette()) this.toutePalette.set(false);
       else if (this.departEnPremier()) this.produit.set(null);
       else this.depart.set(null);
@@ -329,6 +375,7 @@ export class RangerPage implements ViewWillEnter {
   }
 
   recommencer(): void {
+    this.cartons.set([]);
     this.produit.set(null);
     this.depart.set(null);
     this.departEnPremier.set(false);
@@ -346,19 +393,79 @@ export class RangerPage implements ViewWillEnter {
     this.retour.signaler('rouge');
   }
 
+  retirerCarton(k: CartonEnMain): void {
+    this.cartons.update((l) => l.filter((x) => x.qr !== k.qr));
+    this.resultat.set(null);
+  }
+
+  // Un seul carton en main : on déplace plutôt toute sa palette (vers un emplacement vide)
+  async paletteDuCarton(): Promise<void> {
+    const k = this.cartons()[0];
+    if (!k) return;
+    this.lecture.set(true);
+    try {
+      this.depart.set(await this.controles.emplacementARanger(k.ici));
+      this.cartons.set([]);
+      this.produit.set(null);
+      this.departEnPremier.set(false);
+      this.toutePalette.set(true);
+      this.resultat.set(null);
+    } catch (e) {
+      this.resultat.set({ ...erreurLocale(e as HttpErrorResponse), controle: 'ranger', titre: 'Emplacement inconnu' });
+      this.retour.signaler('rouge');
+    } finally {
+      this.lecture.set(false);
+    }
+  }
+
+  // Étiquette d'arrivée des cartons en main : l'API contrôle et enregistre
+  async poserCartons(l: Lecture): Promise<void> {
+    const liste = this.cartons();
+    if (!liste.length) return;
+    this.envoi.set(true);
+    this.retour.lu();
+    try {
+      const r = await this.controles.deplacerCartons(liste.map((k) => k.qr), codeEmplacement(l.texte));
+      this.resultat.set(r);
+      this.retour.signaler(r.couleur);
+      if (r.couleur === 'vert') this.recommencer();
+      await this.chargerJournal();
+    } catch (e) {
+      this.resultat.set({ ...erreurLocale(e as HttpErrorResponse), controle: 'ranger', titre: 'Déplacement non enregistré' });
+      this.retour.signaler('rouge');
+    } finally {
+      this.envoi.set(false);
+    }
+  }
+
   // Ticket scanné : où est ce produit ?
   async choisirProduit(l: Lecture): Promise<void> {
     this.lecture.set(true);
     this.retour.lu();
     try {
       const info = await this.controles.produitARanger(l.texte);
+      if (info.carton && info.ici) {
+        // étiquette d'un carton : il rejoint les cartons en main (ils partiront ensemble à l'arrivée scannée)
+        const k = info.carton;
+        if (!this.cartons().some((x) => x.qr === k.qr)) {
+          this.cartons.update((l) => [...l, { qr: k.qr, numero: k.numero, reference: info.reference, lot: info.lot, cosses: k.cosses, ici: info.ici!, palette: info.palette?.numero ?? 0 }]);
+        }
+        this.produit.set(null);
+        this.depart.set(null);
+        this.departEnPremier.set(false);
+        this.toutePalette.set(false);
+        this.resultat.set(null);
+        this.retour.signaler('vert');
+        return;
+      }
+      if (this.cartons().length) return this.refus("C'est le ticket d'un produit : posez d'abord les cartons en main (étiquette de l'arrivée), ou « Annuler ».", 'Cartons en main');
       const d = this.depart();
       if (d && this.departEnPremier()) {
         // départ déjà choisi : le produit doit y être
         const ici = info.ici ? info.ici === d.code : info.emplacements.some((e) => e.code === d.code);
         if (!ici) {
           const ou = info.ici ?? info.emplacements.map((e) => e.code).join(', ');
-          return this.refus(`${info.reference}${info.colis ? ' (colis ' + info.colis + ')' : ''} n'est pas en ${d.code} : il est en ${ou}.`, 'Pas à cet emplacement');
+          return this.refus(`${info.reference}${info.colis ? ' (colis ' + info.colis + ')' : ''} n'est pas en ${nomEmplacement(d.code)} : il est en ${ou}.`, 'Pas à cet emplacement');
         }
       } else {
         this.depart.set(null);
@@ -384,9 +491,9 @@ export class RangerPage implements ViewWillEnter {
       const p = this.produit()?.info;
       if (p && !enPremier) {
         const ici = p.ici ? p.ici === d.code : p.emplacements.some((e) => e.code === d.code);
-        if (!ici) return this.refus(`${p.reference} n'est pas en ${d.code} : prenez-le en ${p.ici ?? p.emplacements.map((e) => e.code).join(', ')}.`, 'Pas à cet emplacement');
+        if (!ici) return this.refus(`${p.reference} n'est pas en ${nomEmplacement(d.code)} : prenez-le en ${p.ici ?? p.emplacements.map((e) => e.code).join(', ')}.`, 'Pas à cet emplacement');
       } else {
-        if (!d.remplissage.n) return this.refus(`${d.code} est vide : rien à prendre à cet emplacement.`, 'Emplacement vide');
+        if (!d.remplissage.n) return this.refus(`${nomEmplacement(d.code)} est vide : rien à prendre à cet emplacement.`, 'Emplacement vide');
         this.produit.set(null);
         this.toutePalette.set(false);
       }

@@ -8,10 +8,18 @@
       }
     </p>
   </div>
+  <div class="actions-entete">
+  @if (estAdmin()) {
+    <button type="button" class="btn btn-secondaire" (click)="mailsOuverts.set(true)">
+      <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z" /></svg>
+      Mails d'alerte
+    </button>
+  }
   <button type="button" class="btn btn-secondaire" [disabled]="chargement()" (click)="charger()">
     <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" /></svg>
     {{ chargement() ? 'Actualisation…' : 'Actualiser' }}
   </button>
+  </div>
 </div>
 
 @if (erreur()) {
@@ -227,4 +235,8 @@
   </div>
 } @else if (chargement()) {
   <p class="chargement">Chargement du tableau de bord…</p>
+}
+
+@if (mailsOuverts()) {
+  <app-mails-alerte (fermer)="mailsOuverts.set(false)" />
 }

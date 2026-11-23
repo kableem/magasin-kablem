@@ -53,7 +53,7 @@
                 {
                   "type": "anyComponentStyle",
                   "maximumWarning": "6kb",
-                  "maximumError": "10kb"
+                  "maximumError": "12kb"
                 }
               ],
               "fileReplacements": [
@@ -62,6 +62,7 @@
                   "with": "src/environments/environment.prod.ts"
                 }
               ],
+              "baseHref": "/mobile/",
               "outputHashing": "all"
             },
             "development": {

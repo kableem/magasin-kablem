@@ -15,7 +15,7 @@ import {
 import type * as T from 'three';
 import type { OrbitControls as TOrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LigneStock } from '../../services/reception';
-import { BLOCS, Bloc, Emplacement, emplacementTampon } from './plan-magasin';
+import { BLOCS, Bloc, EMPLACEMENTS_BLOQUES, Emplacement, emplacementTampon, estBloque, estBobineWip } from './plan-magasin';
 
 // ---------- Dimensions du magasin (en mètres, approximatives) ----------
 const BAIE = 1.3; // largeur d'un emplacement (1 palette)
@@ -38,6 +38,8 @@ const COULEURS = {
   mur: 0xeef0f4,
   survol: 0x0c71c3,
   selection: 0xe02222,
+  wip: 0xf0a23a, // niveau 0 des blocs E à H : stockage des bobines WIP (non géré)
+  bloque: 0xd42020, // on n'y pose rien
 };
 
 // Couleurs des tourets de fil (bobines), choisies selon la référence
@@ -82,6 +84,8 @@ interface Case {
         <span><i class="bobine"></i>Bobine</span>
         <span><i class="cosse"></i>Cosse</span>
         <span><i class="connecteur"></i>Connecteur</span>
+        <span title="Niveau 0 des blocs E à H : bobines WIP (retours incomplets de la production), non gérées par l'application"><i class="wip"></i>Bobines WIP (non géré)</span>
+        <span title="On n'y pose rien"><i class="bloque"></i>Bloqué</span>
         <button type="button" (click)="vueGenerale()">Vue générale</button>
       </div>
     </div>
@@ -141,6 +145,8 @@ interface Case {
     .legende span { display: inline-flex; align-items: center; gap: 6px; }
     .legende i { width: 14px; height: 14px; border-radius: 3px; }
     .legende .bobine { background: #34459a; border-radius: 50%; }
+    .legende .wip { background: #f0a23a; }
+    .legende .bloque { background: repeating-linear-gradient(45deg, #d42020 0 3px, #fff 3px 6px); }
     .legende .cosse { background: #b98f58; border-radius: 50%; }
     .legende .connecteur { background: #c9a26b; }
     .legende button {
@@ -315,14 +321,19 @@ export class Vue3d implements AfterViewInit, OnDestroy {
     const blocs = this.blocs();
     let z = 0;
     let zFinD = 0; // la porte de sortie est dans l'allée qui suit le bloc D
-    const hauteur = 5 * NIVEAU + 0.25;
     const zoneGeo = new THREE.BoxGeometry(BAIE * 0.92, NIVEAU * 0.9, PROFONDEUR * 0.92);
     const zoneMat = this.retenir(new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+    // Niveau 0 non géré : bobines WIP (orange au sol), emplacement bloqué (rouge)
+    const solGeo = new THREE.BoxGeometry(BAIE * 0.94, 0.03, PROFONDEUR * 0.94);
+    const matWip = this.retenir(new THREE.MeshLambertMaterial({ color: COULEURS.wip, transparent: true, opacity: 0.75 }));
+    const matBloque = this.retenir(new THREE.MeshLambertMaterial({ color: COULEURS.bloque, transparent: true, opacity: 0.85 }));
 
     for (const bloc of blocs) {
       // Tout le rayonnage du bloc dans un groupe, pour pouvoir l'isoler
       const groupe = new THREE.Group();
       scene.add(groupe);
+      // hauteur du rayonnage de ce bloc (le bloc E a un niveau de plus)
+      const hauteur = bloc.nbNiveaux * NIVEAU + 0.25;
       this.groupes.set(bloc.lettre, groupe);
       cible = groupe;
       const nbFacades = bloc.facades.length;
@@ -344,19 +355,40 @@ export class Vue3d implements AfterViewInit, OnDestroy {
         const zArriere = zAvant - normale * PROFONDEUR;
         const zCentre = (zAvant + zArriere) / 2;
 
-        // Lisses bleues : une lisse basse au sol, puis une par niveau (+ le haut)
-        const hauteursLisses = [0.15, 1, 2, 3, 4, 5].map((n, i) => (i === 0 ? n : n * NIVEAU));
-        for (const y of hauteursLisses) {
-          boite(longueur, 0.12, 0.06, matLisse, longueur / 2, y, zAvant);
-          boite(longueur, 0.12, 0.06, matLisse, longueur / 2, y, zArriere);
-        }
+        // Places qui n'existent pas dans le magasin (bloquées au-dessus du sol, ex. près du bureau) : pas dessinées
+        const absente = (niveau: number, p: number) =>
+          niveau >= bloc.nbNiveaux || f.niveaux.find((x) => x.niveau === niveau)?.emplacements.some((e) => e.position === p && niveau > 0 && estBloque(e));
+        // Lisses bleues : une lisse basse au sol, puis une par niveau (+ le haut). La lisse du niveau k porte le
+        // niveau k et ferme le niveau k - 1 : elle manque seulement là où ces deux niveaux n'existent pas.
+        const hauteursLisses = [0.15, ...Array.from({ length: bloc.nbNiveaux }, (_, i) => (i + 1) * NIVEAU)];
+        hauteursLisses.forEach((y, k) => {
+          let debut = 0;
+          for (let p = 0; p <= bloc.nbEmplacements; p++) {
+            const manque = p < bloc.nbEmplacements && k > 0 && absente(k, p) && absente(k - 1, p);
+            if (p === bloc.nbEmplacements || manque) {
+              if (p > debut) {
+                const l = (p - debut) * BAIE;
+                boite(l, 0.12, 0.06, matLisse, debut * BAIE + l / 2, y, zAvant);
+                boite(l, 0.12, 0.06, matLisse, debut * BAIE + l / 2, y, zArriere);
+              }
+              debut = p + 1;
+            }
+          }
+        });
 
         for (const n of f.niveaux) {
           n.emplacements.forEach((e) => {
+            if (absente(n.niveau, e.position)) return; // n'existe pas dans le magasin
             const x = (e.position + 0.5) * BAIE; // position 0 = contre le mur du fond
             const yBase = n.niveau === 0 ? 0 : n.niveau * NIVEAU + 0.06;
             const centre = new THREE.Vector3(x, yBase + NIVEAU * 0.45, zCentre);
             this.cases.set(e.code, { emplacement: e, centre, normale });
+            if (estBobineWip(e) || (estBloque(e) && n.niveau === 0)) {
+              const tapis = new THREE.Mesh(solGeo, estBloque(e) ? matBloque : matWip);
+              // à la hauteur de son niveau (sol pour le niveau 0) : 0332, au sol à côté de 0331, n'est pas bloqué
+              tapis.position.set(x, n.niveau === 0 ? 0.02 : n.niveau * NIVEAU + 0.1, zCentre);
+              groupe.add(tapis);
+            }
 
             // Zone cliquable invisible
             const zone = new THREE.Mesh(zoneGeo, zoneMat);
@@ -832,7 +864,11 @@ export class Vue3d implements AfterViewInit, OnDestroy {
                   x: ev.clientX - rect.left,
                   y: ev.clientY - rect.top,
                   code: this.numeros().has(code) ? `${this.numeros().get(code)} · ${code}` : code,
-                  contenu: contenu.length
+                  contenu: EMPLACEMENTS_BLOQUES.has(code)
+                    ? `Bloqué : ${EMPLACEMENTS_BLOQUES.get(code)}`
+                    : !contenu.length && c && estBobineWip(c.emplacement)
+                      ? 'Stockage des bobines WIP (non géré par l’application)'
+                      : contenu.length
                     ? contenu.length > 1 || (contenu[0].quantite ?? 1) > 1
                       ? `${contenu.reduce((s, l) => s + (l.quantite ?? 1), 0)} × ${[...new Set(contenu.map((l) => l.reference))].join(', ')}`
                       : `${contenu[0].reference} · lot ${contenu[0].lot}`

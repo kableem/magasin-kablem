@@ -11,6 +11,7 @@
 // Toutes les règles sont ici, jamais dans le téléphone. Chaque opération porte un uuid généré
 // par le téléphone : si le même uuid revient (renvoi après coupure Wi-Fi), la réponse
 // enregistrée est renvoyée telle quelle, sans nouveau contrôle.
+const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
 const R = require('../rangement');
@@ -23,6 +24,11 @@ const { lireTicket, lireEmplacement, lotsDuTicket, messageIllisible } = require(
 const { affectationDuColis } = require('../affectations');
 const { TYPES_PALETTE, typePalette, nommer } = require('../palettes');
 const { receptionPrecedenteNonTerminee, messageOrdreReception } = require('./imports');
+const { tolerancePieces, modeReception } = require('../parametres');
+const { nombre } = require('../import-resume');
+const { typesDuCatalogue } = require('../articles');
+const C = require('../cartons');
+const P = require('../palettes-cosses');
 
 const refus = (status, message) => Object.assign(new Error(message), { status });
 
@@ -49,6 +55,7 @@ const COULEURS = {
   sans_emplacement: 'orange',
   deplace: 'vert',
   deplacement_refuse: 'rouge',
+  carton: 'orange',
 };
 const TITRES = {
   conforme: 'Conforme',
@@ -71,6 +78,7 @@ const TITRES = {
   sans_emplacement: "Pas d'emplacement prévu",
   deplace: 'Déplacé',
   deplacement_refuse: 'Déplacement refusé',
+  carton: 'Cosse dans un carton',
 };
 const ALERTES = ['ecart_quantite', 'faux_emplacement', 'inconnu', 'mauvais_produit', 'stock_modifie', 'deplacement_refuse'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -134,7 +142,7 @@ const texteEmplacements = (liste) => liste.map((e) => e.code ?? 'non rangé').jo
 // Réponse pour le téléphone (même forme pour un contrôle enregistré et pour une suggestion)
 function reponseControle(req, controle, resultat, donnees) {
   const d = {
-    reference: null, lot: null, quantite_ticket: null, quantite_attendue: null, ecart: null,
+    reference: null, lot: null, quantite_ticket: null, pieces: null, quantite_attendue: null, ecart: null,
     ligne: null, reception_id: null, emplacements_prevus: [], emplacement_scanne: null, preparation_id: null, palette_id: null, ticket: null, extra: {}, ...donnees,
   };
   d.message = avecNumeros(d.message);
@@ -163,17 +171,70 @@ function reponseControle(req, controle, resultat, donnees) {
   return { d, reponse };
 }
 
+// Réception d'un import en cartons : la cosse reçue (conforme, en trop ou hors import) entre dans le
+// carton ouvert du magasinier ; la 1re fixe sa référence et son lot. Renvoie l'id du carton, ou null.
+async function rattacherAuCarton(connexion, req, controle, resultat, d, reponse) {
+  const c = req.cartonReception;
+  if (controle !== 'reception' || !c || !['conforme', 'ecart_quantite', 'inconnu'].includes(resultat)) return null;
+  if (!(d.import_id ?? d.ligne?.import_id)) return null; // cosse d'un autre import : pas dans ce carton
+  await connexion.query('UPDATE cartons SET reference = COALESCE(reference, ?), lot = COALESCE(lot, ?) WHERE id = ?', [d.reference, c.lotComplet, c.id]);
+  const [[{ n }]] = await connexion.query(
+    "SELECT COUNT(*) AS n FROM controles_mobile WHERE carton_id = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite', 'inconnu')",
+    [c.id]
+  );
+  const cosses = Number(n) + 1;
+  reponse.carton = { id: c.id, numero: c.numero, reference: c.reference ?? d.reference, lot: c.lot ?? c.lotComplet, cosses, scan: req.body.uuid };
+  reponse.message = d.message = `${d.message} Carton n° ${c.numero} : ${cosses} cosse${cosses > 1 ? 's' : ''}.`;
+  return c.id;
+}
+
+// Cosse plate reçue pendant qu'une palette est ouverte (dans un carton ou séparée) : elle est sur cette palette.
+// Renvoie l'id de la palette, ou null.
+async function rattacherALaPalette(connexion, req, controle, resultat, d, reponse) {
+  const p = req.paletteReception;
+  if (controle !== 'reception' || !p || !['conforme', 'ecart_quantite', 'inconnu'].includes(resultat)) return null;
+  if (!(d.import_id ?? d.ligne?.import_id)) return null; // cosse d'un autre import : pas sur cette palette
+  const [[{ n, cartons, ce_carton }]] = await connexion.query(
+    `SELECT COUNT(*) AS n, COUNT(DISTINCT carton_id) AS cartons, COALESCE(SUM(carton_id = ?), 0) AS ce_carton FROM controles_mobile
+     WHERE palette_cosses_id = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite', 'inconnu')`,
+    [req.cartonReception?.id ?? 0, p.id]
+  );
+  const cosses = Number(n) + 1;
+  const nbCartons = Number(cartons) + (req.cartonReception && !Number(ce_carton) ? 1 : 0);
+  if (p.complement) {
+    // palette du magasin descendue : on compte les cartons de cet import ajoutés
+    const [[{ ajoutes }]] = await connexion.query(
+      "SELECT COUNT(*) AS ajoutes FROM controles_mobile WHERE palette_cosses_id = ? AND import_id = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite', 'inconnu')",
+      [p.id, p.descendue_import]
+    );
+    const k = Number(ajoutes) + 1;
+    reponse.palette_cosses = { id: p.id, numero: p.numero, famille: 'connecteur', complement: true, emplacement: p.emplacement, ajoutes: k };
+    reponse.message = d.message = `${d.message} ${avecNumeros(`Ajouté à la palette de ${p.emplacement}`)} : ${k} carton${k > 1 ? 's' : ''} ajouté${k > 1 ? 's' : ''}.`;
+    return p.id;
+  }
+  if (p.famille === 'connecteur') {
+    reponse.palette_cosses = { id: p.id, numero: p.numero, famille: 'connecteur', cosses, cartons: cosses };
+    reponse.message = d.message = `${d.message} Palette n° ${p.numero}${p.nouvelle ? ' ouverte' : ''} : ${cosses} carton${cosses > 1 ? 's' : ''} de connecteurs.`;
+    return p.id;
+  }
+  reponse.palette_cosses = { id: p.id, numero: p.numero, cosses, cartons: nbCartons };
+  reponse.message = d.message = `${d.message} Palette n° ${p.numero}${p.nouvelle ? ' ouverte' : ''} : ${cosses} cosse${cosses > 1 ? 's' : ''}.`;
+  return p.id;
+}
+
 // Enregistre le contrôle et renvoie la réponse pour le téléphone
 async function enregistrer(connexion, req, controle, resultat, donnees) {
   const { d, reponse } = reponseControle(req, controle, resultat, donnees);
+  const cartonId = (await rattacherAuCarton(connexion, req, controle, resultat, d, reponse)) ?? d.carton_id ?? null;
+  const paletteId = (await rattacherALaPalette(connexion, req, controle, resultat, d, reponse)) ?? d.palette_cosses_id ?? null;
   await connexion.query(
     `INSERT INTO controles_mobile
-       (uuid, controle, resultat, reference, lot, ticket, quantite_ticket, quantite_attendue, ecart, reception_id, import_id,
-        preparation_id, palette_id, emplacement_prevu, emplacement_scanne, saisie_manuelle, qr_brut, message, reponse, utilisateur_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (uuid, controle, resultat, reference, lot, ticket, quantite_ticket, pieces, quantite_attendue, ecart, reception_id, import_id,
+        preparation_id, palette_id, carton_id, palette_cosses_id, emplacement_prevu, emplacement_scanne, saisie_manuelle, qr_brut, message, reponse, utilisateur_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      req.body.uuid, controle, resultat, d.reference, d.lot, d.ticket, d.quantite_ticket, d.quantite_attendue, d.ecart,
-      d.reception_id ?? d.ligne?.id ?? null, d.import_id ?? d.ligne?.import_id ?? null, d.preparation_id, d.palette_id, texteEmplacements(d.emplacements_prevus), d.emplacement_scanne,
+      req.body.uuid, controle, resultat, d.reference, d.lot, d.ticket, d.quantite_ticket, d.pieces, d.quantite_attendue, d.ecart,
+      d.reception_id ?? d.ligne?.id ?? null, d.import_id ?? d.ligne?.import_id ?? null, d.preparation_id, d.palette_id, cartonId, paletteId, texteEmplacements(d.emplacements_prevus), d.emplacement_scanne,
       req.body.saisie_manuelle ? 1 : 0, String(req.body.qr ?? '').slice(0, 500), d.message.slice(0, 255),
       JSON.stringify(reponse), req.utilisateur.id,
     ]
@@ -232,7 +293,12 @@ async function receptionColis(connexion, req, ticket, lignes, base, palette = nu
     [lignes.map((l) => l.id)]
   );
   const recus = new Map(comptes.map((c) => [c.reception_id, Number(c.n)]));
-  const extraColis = (n, attendue) => ({ colis: { numero: colis, confection: ticket.confection, recus: n, attendus: attendue } });
+  const extraColis = (n, attendue) => ({
+    colis: { numero: colis, confection: ticket.confection, recus: n, attendus: attendue },
+    ...(base.resume ? { pieces: base.resume } : {}),
+  });
+  // Import résumé : le compteur de pièces de la référence, à la suite du message
+  const suite = base.resume ? ` ${texteResume(base.resume)}` : '';
 
   // La ligne la plus ancienne qui attend encore des colis
   const ligne = lignes.find((l) => (recus.get(l.id) ?? 0) < l.attendue);
@@ -266,7 +332,17 @@ async function receptionColis(connexion, req, ticket, lignes, base, palette = nu
         ...extraColis(n, ligne.attendue),
         palette: { id: palette.id, numero: palette.numero, type: ligne.type, taille: ligne.taille_bobine ?? null, n: k, capacite: cap, pleine: k >= cap },
       },
-      message: `Colis n° ${colis} conforme : palette ${palette.numero} (${k}/${cap})${k >= cap ? ', palette pleine : terminez-la' : ''}.`,
+      message: `Colis n° ${colis} conforme${base.resume ? ` (+${nombre(base.resume.pieces)} pièces)` : ''} : palette ${palette.numero} (${k}/${cap})${k >= cap ? ', palette pleine : terminez-la' : ''}.${suite}`,
+    });
+  }
+  if (ligne && base.separee) {
+    // Réception séparée : on contrôle seulement ; le rangement viendra après la validation de la réception
+    const n = (recus.get(ligne.id) ?? 0) + 1;
+    return enregistrer(connexion, req, 'reception', 'conforme', {
+      ...base, ligne, quantite_attendue: ligne.attendue, extra: extraColis(n, ligne.attendue),
+      message: base.resume
+        ? `Colis n° ${colis} conforme (+${nombre(base.resume.pieces)} pièces).${suite}`
+        : `Colis n° ${colis} conforme : ${n}/${ligne.attendue} reçu(s) pour ${reference} lot ${nomLot}.`,
     });
   }
   if (ligne) {
@@ -274,7 +350,9 @@ async function receptionColis(connexion, req, ticket, lignes, base, palette = nu
     const emplacements = await emplacementsPrevus(connexion, ligne);
     return enregistrer(connexion, req, 'reception', 'conforme', {
       ...base, ligne, quantite_attendue: ligne.attendue, emplacements_prevus: emplacements, extra: extraColis(n, ligne.attendue),
-      message: `Colis n° ${colis} conforme : ${n}/${ligne.attendue} reçu(s) pour ce lot. Rangez-le en ${texteEmplacements(emplacements) ?? 'zone tampon'}.`,
+      message: base.resume
+        ? `Colis n° ${colis} conforme (+${nombre(base.resume.pieces)} pièces).${suite} Rangez-le en ${texteEmplacements(emplacements) ?? 'zone tampon'}.`
+        : `Colis n° ${colis} conforme : ${n}/${ligne.attendue} reçu(s) pour ce lot. Rangez-le en ${texteEmplacements(emplacements) ?? 'zone tampon'}.`,
     });
   }
   // Tous les colis annoncés sont déjà reçus : colis en trop
@@ -283,20 +361,177 @@ async function receptionColis(connexion, req, ticket, lignes, base, palette = nu
   return enregistrer(connexion, req, 'reception', 'ecart_quantite', {
     ...base, ligne: lignes[lignes.length - 1], quantite_ticket: total, quantite_attendue: attendus, ecart: total - attendus,
     extra: extraColis(total, attendus),
-    message: `Colis en trop : l'import annonce ${attendus} produit(s) pour ${reference} lot ${nomLot}, tous déjà reçus. Mettez le colis n° ${colis} de côté (hors stock), il sera signalé au chef.`,
+    message: base.separee
+      ? `Colis en trop : l'import annonce ${attendus} produit(s) pour ${reference} lot ${nomLot}, tous déjà reçus. Le colis n° ${colis} entre au stock ; une réclamation sera créée.`
+      : `Colis en trop : l'import annonce ${attendus} produit(s) pour ${reference} lot ${nomLot}, tous déjà reçus. Mettez le colis n° ${colis} de côté (hors stock), il sera signalé au chef.`,
   });
+}
+
+// « AK 15317766 : 40 500 / 45 000 pièces (9 colis). »
+function texteResume(r) {
+  const etat = r.recues - r.attendues > r.tolerance
+    ? ' : plus que prévu, ce sera signalé au chef'
+    : r.recues >= r.attendues - r.tolerance ? ' : référence complète' : '';
+  return `${r.reference} : ${nombre(r.recues)} / ${nombre(r.attendues)} pièces (${r.colis} colis)${etat}.`;
+}
+
+// Import résumé (fichier de l'Italie : référence + total de pièces, sans lot ni colis).
+// Le ticket doit porter son n° de colis et ses pièces ; la référence doit être annoncée dans l'import.
+// Le 1er colis d'un lot crée la ligne référence + lot de l'import, les suivants l'augmentent d'un colis :
+// la réception continue ensuite comme pour un import détaillé (palette, emplacement…).
+// Renvoie { resume } (compteur de la référence, ce colis compris), { reponse } (refus enregistré) ou {} (hors import).
+async function colisImportResume(connexion, req, imp, ticket, base) {
+  const { reference, lot, colis } = ticket;
+  if (!ticket.cle || !ticket.confection) {
+    throw refus(409, 'Import par référence : scannez le QR du bas du ticket vert (il porte le n° du colis et sa quantité de pièces).');
+  }
+  const [[attendu]] = await connexion.query(
+    'SELECT reference, type, taille_bobine, type_cosse, pieces FROM imports_attendus WHERE import_id = ? AND reference = ?',
+    [imp.id, reference]
+  );
+  if (!attendu) return {}; // pas annoncée : la suite la note « hors import »
+  const [[deja]] = await connexion.query(
+    "SELECT reception_id FROM controles_mobile WHERE ticket = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite') LIMIT 1",
+    [ticket.cle]
+  );
+  if (deja) {
+    return {
+      reponse: await enregistrer(connexion, req, 'reception', 'deja_traite', {
+        ...base, reception_id: deja.reception_id,
+        message: `Le colis n° ${colis} de ${reference} lot ${lot}${ticket.suffixe ? '-' + ticket.suffixe : ''} a déjà été reçu : pas de deuxième réception.`,
+      }),
+    };
+  }
+  const [[ligne]] = await connexion.query(
+    'SELECT id FROM receptions WHERE import_id = ? AND reference = ? AND lot = ? FOR UPDATE',
+    [imp.id, reference, lot]
+  );
+  if (ligne) {
+    await connexion.query('UPDATE receptions SET quantite = quantite + 1 WHERE id = ?', [ligne.id]);
+  } else {
+    await connexion.query(
+      `INSERT INTO receptions (import_id, type, taille_bobine, type_cosse, reference, lot, date_reception, quantite, utilisateur_id)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), 1, ?)`,
+      [imp.id, attendu.type, attendu.taille_bobine, attendu.type_cosse, attendu.reference, lot, req.utilisateur.id]
+    );
+  }
+  const [[avant]] = await connexion.query(
+    `SELECT COALESCE(SUM(c.pieces), 0) AS pieces, COUNT(*) AS colis
+     FROM controles_mobile c JOIN receptions r ON r.id = c.reception_id
+     WHERE r.import_id = ? AND r.reference = ? AND c.controle = 'reception' AND c.resultat = 'conforme'`,
+    [imp.id, reference]
+  );
+  const pct = await tolerancePieces(connexion);
+  return {
+    resume: {
+      reference: attendu.reference,
+      pieces: ticket.confection,
+      recues: Number(avant.pieces) + ticket.confection,
+      attendues: attendu.pieces,
+      colis: Number(avant.colis) + 1,
+      tolerance: Math.floor((attendu.pieces * pct) / 100),
+    },
+  };
+}
+
+// Type du produit de ce ticket dans cet import (ligne d'import, total annoncé, sinon catalogue Articles)
+async function typeDuTicket(connexion, imp, ticket) {
+  const [[ligne]] = imp.mode === 'resume'
+    ? await connexion.query('SELECT type, type_cosse FROM imports_attendus WHERE import_id = ? AND reference = ?', [imp.id, ticket.reference])
+    : await connexion.query(
+        'SELECT type, type_cosse FROM receptions WHERE import_id = ? AND UPPER(TRIM(reference)) = ? AND TRIM(lot) IN (?) LIMIT 1',
+        [imp.id, ticket.reference, lotsDuTicket(ticket)]
+      );
+  return ligne ?? (await typesDuCatalogue(connexion, [ticket.reference])).get(ticket.reference) ?? null;
+}
+
+// Mode choisi sur le téléphone pour les cosses plates (body.emballage), gardé jusqu'au prochain changement :
+//   'carton' : la cosse entre dans le carton ouvert du magasinier, ouvert tout seul s'il n'y en a pas ;
+//   'separe' : la cosse est reçue séparée.
+// Palette de cosses : un carton est toujours sur une palette (en mode Cartons, la palette s'ouvre seule si le
+// magasinier n'en a pas d'ouverte). Une palette ne porte que des cartons : une cosse séparée n'y va jamais.
+// Pas encore de mode : le téléphone demande « Cartons ou Séparées ? » (refus emballage_requis), puis renvoie le scan.
+// Cosses plates et axiales peuvent aller en carton ; bobines et connecteurs jamais : null.
+async function cartonDuScan(connexion, req, imp, ticket) {
+  if (req.urgence) return null; // sortie urgente : le colis part tout de suite, ni carton ni palette
+  const t = await typeDuTicket(connexion, imp, ticket);
+  if (!t || t.type !== 'cosse') return null; // cosses plates et axiales
+  const mode = req.body.emballage;
+  if (mode !== 'carton' && mode !== 'separe') {
+    throw Object.assign(refus(409, 'Ces cosses arrivent-elles en cartons ou séparées ? Choisissez, puis le scan continue.'), { codeMetier: 'emballage_requis' });
+  }
+  // Séparées : sans palette (une palette ne porte que des cartons ; décision du 2026-11-12). La cosse séparée
+  // recevra sa place aux niveaux des cosses séparées (1-2, et 1-3 du bloc E).
+  if (mode === 'separe') return null;
+  if (!ticket.cle) throw refus(409, 'Scannez le QR du bas du ticket vert de la cosse (il porte le n° du colis).');
+  const lot = C.lotComplet(ticket);
+  let [[c]] = await connexion.query(
+    "SELECT * FROM cartons WHERE import_id = ? AND statut = 'ouvert' AND ouvert_par = ? ORDER BY numero DESC LIMIT 1 FOR UPDATE",
+    [imp.id, req.utilisateur.id]
+  );
+  // la palette du carton ouvert, sinon la palette ouverte du magasinier, sinon une nouvelle palette
+  if (c?.palette_id) {
+    [[req.paletteReception]] = await connexion.query(`${P.SELECT_PALETTE} WHERE p.id = ? AND p.statut = 'ouverte' FOR UPDATE`, [c.palette_id]);
+  }
+  if (!req.paletteReception) {
+    req.paletteReception = await P.paletteOuverte(connexion, imp.id, req.utilisateur.id, true, 'cosse');
+    if (c) await connexion.query('UPDATE cartons SET palette_id = ? WHERE id = ?', [req.paletteReception.id, c.id]);
+  }
+  req.paletteReception = await P.verifierFamille(connexion, req.paletteReception, 'cosse');
+  if (!c) {
+    // mode Cartons, aucun carton ouvert : le carton suivant s'ouvre avec cette cosse, sur la palette
+    const [[{ suivant }]] = await connexion.query('SELECT COALESCE(MAX(numero), 0) + 1 AS suivant FROM cartons WHERE import_id = ? FOR UPDATE', [imp.id]);
+    const [r] = await connexion.query('INSERT INTO cartons (import_id, palette_id, numero, ouvert_par) VALUES (?, ?, ?, ?)', [imp.id, req.paletteReception.id, suivant, req.utilisateur.id]);
+    await connexion.query("UPDATE imports SET emballage = 'carton' WHERE id = ?", [imp.id]);
+    [[c]] = await connexion.query('SELECT * FROM cartons WHERE id = ?', [r.insertId]);
+  }
+  if (c.reference) {
+    const [[{ n }]] = await connexion.query(
+      "SELECT COUNT(*) AS n FROM controles_mobile WHERE carton_id = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite', 'inconnu')",
+      [c.id]
+    );
+    if (!Number(n)) {
+      // toutes ses cosses ont été retirées : le carton accepte une autre référence
+      await connexion.query('UPDATE cartons SET reference = NULL, lot = NULL WHERE id = ?', [c.id]);
+      c = { ...c, reference: null, lot: null };
+    } else if (c.reference.toUpperCase() !== ticket.reference || c.lot !== lot) {
+      throw refus(409, `Le carton n° ${c.numero} contient ${c.reference} lot ${c.lot} : un carton n'a qu'une référence et un lot. Touchez « Terminer le carton » avant de scanner ${ticket.reference} lot ${lot}.`);
+    }
+  }
+  return { ...c, lotComplet: lot };
+}
+
+// Connecteurs (migration 041) : chaque carton (son ticket vert) va sur la palette de connecteurs ouverte du magasinier,
+// ouverte toute seule au 1er carton ; ou, s'il a descendu une palette du magasin pour la compléter, sur celle-ci.
+// Jamais de cosses et de connecteurs sur la même palette. Renvoie la palette, ou null (ce n'est pas un connecteur).
+async function paletteConnecteur(connexion, req, imp, ticket) {
+  if (req.urgence) return null; // sortie urgente : le colis part tout de suite
+  const t = await typeDuTicket(connexion, imp, ticket);
+  if (t?.type !== 'connecteur') return null;
+  if (!ticket.cle) throw refus(409, 'Scannez le QR du bas du ticket vert du carton (il porte le n° du colis).');
+  const descendue = await P.paletteDescendue(connexion, req.utilisateur.id, true);
+  if (descendue) {
+    if (descendue.descendue_import !== imp.id) throw refus(409, `Remettez d'abord la palette descendue en ${descendue.emplacement} (elle est complétée pour un autre import).`);
+    return { ...descendue, complement: true };
+  }
+  const p = await P.paletteOuverte(connexion, imp.id, req.utilisateur.id, true, 'connecteur');
+  return P.verifierFamille(connexion, p, 'connecteur');
 }
 
 // ---------- Contrôle 1 : réception du ticket ----------
 // POST /api/mobile/reception  { uuid, qr, saisie_manuelle? }
 // import_id (facultatif) = import en cours de réception choisi sur le mobile : les colis sont
 // rapprochés de cet import ; un produit absent de l'import est noté « hors import » pour lui.
-router.post('/reception', operation('reception', async (connexion, req) => {
+// req.urgence (sortie urgente, routes/mobile-urgence.js) : le colis se contrôle de la même façon, mais sans
+// carton ni palette, et sans attendre la réception des imports plus anciens.
+router.post('/reception', operation('reception', controleReception));
+
+async function controleReception(connexion, req) {
   const importChoisi = Number(req.body.import_id) > 0 ? Number(req.body.import_id) : null;
   let imp = null;
   if (importChoisi) {
     [[imp]] = await connexion.query(
-      'SELECT id, statut, reception, numero_livraison FROM imports WHERE id = ? FOR UPDATE',
+      'SELECT id, statut, mode, reception, numero_livraison FROM imports WHERE id = ? FOR UPDATE',
       [importChoisi]
     );
     if (!imp) throw Object.assign(new Error('Import introuvable'), { status: 404 });
@@ -306,7 +541,7 @@ router.post('/reception', operation('reception', async (connexion, req) => {
         message: `La réception de l'import ${imp.numero_livraison ?? 'n° ' + imp.id} est terminée : choisissez un autre import.`,
       });
     }
-    const avant = await receptionPrecedenteNonTerminee(connexion, imp.id);
+    const avant = req.urgence ? null : await receptionPrecedenteNonTerminee(connexion, imp.id);
     if (avant) throw refus(409, messageOrdreReception(avant));
   }
   const ticket = lireTicket(req.body.qr);
@@ -314,7 +549,39 @@ router.post('/reception', operation('reception', async (connexion, req) => {
     return enregistrer(connexion, req, 'reception', 'ticket_illisible', { import_id: importChoisi, message: messageIllisible(req.body.qr) });
   }
   const { reference, lot, quantite } = ticket;
-  const base = { reference, lot, quantite_ticket: quantite, ticket: ticket.cle, import_id: importChoisi };
+  const base = { reference, lot, quantite_ticket: quantite, pieces: ticket.confection ?? null, ticket: ticket.cle, import_id: importChoisi };
+  // Réception séparée (par défaut) : contrôle des produits, lots et écarts seulement, sans palette ni emplacement
+  base.separee = (await modeReception(connexion)) === 'separee';
+  // Cosses plates d'un import en cartons : elles entrent dans le carton ouvert du magasinier
+  if (imp && base.separee) req.cartonReception = await cartonDuScan(connexion, req, imp, ticket);
+  if (imp && base.separee && !req.cartonReception) {
+    const pc = await paletteConnecteur(connexion, req, imp, ticket);
+    if (pc) req.paletteReception = pc;
+  }
+  if (req.cartonReception && ticket.cle) {
+    // Cosse déjà reçue séparée dans cet import : elle reste séparée, pas de 2e réception
+    // (plus de correction « Mettre dans le carton » depuis le 2026-11-23)
+    const [[separee]] = await connexion.query(
+      `SELECT id FROM controles_mobile
+       WHERE ticket = ? AND controle = 'reception' AND carton_id IS NULL AND import_id = ?
+         AND resultat IN ('conforme', 'ecart_quantite', 'inconnu') LIMIT 1`,
+      [ticket.cle, imp.id]
+    );
+    if (separee) {
+      const k = req.cartonReception;
+      req.cartonReception = null; // ce scan n'entre pas dans le carton
+      return enregistrer(connexion, req, 'reception', 'deja_traite', {
+        ...base,
+        message: `Cette cosse (colis n° ${ticket.colis}) est déjà reçue séparée : elle reste séparée, elle n'entre pas dans le carton ${k.numero}.`,
+      });
+    }
+  }
+  if (imp?.mode === 'resume') {
+    // Import résumé : la ligne référence + lot naît (ou grandit) avec ce colis
+    const pret = await colisImportResume(connexion, req, imp, ticket, base);
+    if (pret.reponse) return pret.reponse;
+    base.resume = pret.resume;
+  }
   const toutes = (await lignesDuTicket(connexion, reference, lotsDuTicket(ticket))).filter((l) => l.attendue > 0);
   const lignes = importChoisi ? toutes.filter((l) => l.import_id === importChoisi) : toutes;
 
@@ -334,14 +601,16 @@ router.post('/reception', operation('reception', async (connexion, req) => {
       import_id: ailleurs ? null : importChoisi,
       message: ailleurs
         ? `${reference} lot ${lot} appartient à l'import ${ailleurs.numero_livraison ?? 'n° ' + ailleurs.import_id}, pas à celui-ci : mettez ce colis de côté pour sa réception.`
-        : importChoisi
+        : importChoisi && base.separee
+          ? `${reference} lot ${lot} n'est pas dans cet import : une réclamation « hors import » sera créée et il entrera au stock (si la référence est au catalogue Articles).`
+          : importChoisi
           ? `${reference} lot ${lot} n'est pas dans cet import : mettez ce colis de côté. Il sera signalé au chef (hors import).`
           : `${reference} lot ${lot} n'existe dans aucun import : rangement bloqué. Prévenez le responsable.`,
     });
   }
   // Bobines et cosses plates d'un import : reçues palette par palette (ticket du colis obligatoire).
   // Les cosses axiales (petites) se reçoivent une par une, sans palette, comme les connecteurs.
-  if (importChoisi && TYPES_PALETTE.includes(lignes[0].type) && !R.estAxiale(lignes[0])) {
+  if (importChoisi && !base.separee && !req.urgence && TYPES_PALETTE.includes(lignes[0].type) && !R.estAxiale(lignes[0])) {
     const quoi = lignes[0].type === 'cosse' ? 'cosse' : 'bobine';
     if (!ticket.cle) throw refus(409, `Ce ticket n'a pas de n° de colis : scannez le QR du bas du ticket vert de la ${quoi}.`);
     const paletteId = Number(req.body.palette_id) > 0 ? Number(req.body.palette_id) : null;
@@ -362,20 +631,22 @@ router.post('/reception', operation('reception', async (connexion, req) => {
   // Plusieurs lignes possibles (même lot envoyé en plusieurs fois, cartons identiques) :
   // d'abord celle dont la quantité correspond, sinon la plus ancienne
   const ligne = aRecevoir.find((l) => l.attendue === quantite) ?? aRecevoir[0];
-  const emplacements = await emplacementsPrevus(connexion, ligne);
+  const emplacements = base.separee ? [] : await emplacementsPrevus(connexion, ligne);
   const ecart = quantite - ligne.attendue;
   const donnees = { ...base, ligne, quantite_attendue: ligne.attendue, ecart, emplacements_prevus: emplacements };
   if (ecart === 0) {
     return enregistrer(connexion, req, 'reception', 'conforme', {
       ...donnees,
-      message: `Quantité conforme (${quantite}). Rangez-le en ${texteEmplacements(emplacements) ?? 'zone tampon'}.`,
+      message: base.separee
+        ? `Quantité conforme (${quantite}) pour ${reference} lot ${lot}.`
+        : `Quantité conforme (${quantite}). Rangez-le en ${texteEmplacements(emplacements) ?? 'zone tampon'}.`,
     });
   }
   return enregistrer(connexion, req, 'reception', 'ecart_quantite', {
     ...donnees,
     message: `Écart de ${ecart > 0 ? '+' : ''}${ecart} : ticket ${quantite}, import ${ligne.attendue}. L'écart est enregistré.`,
   });
-}));
+}
 
 // ---------- Contrôle 2 : rangement ----------
 // Sur le téléphone : 1) ticket du produit → l'application indique l'emplacement où aller,
@@ -393,10 +664,20 @@ async function ticketARanger(connexion, ticket, code = null) {
   if (ticket.cle) {
     // Colis : il doit avoir été reçu, et n'est rangé qu'une fois
     const [[recu]] = await connexion.query(
-      `SELECT reception_id FROM controles_mobile
-       WHERE ticket = ? AND controle = 'reception' AND resultat IN ('conforme', 'ecart_quantite') ORDER BY id LIMIT 1`,
+      `SELECT c.reception_id, c.carton_id, c.palette_cosses_id, ca.numero AS carton FROM controles_mobile c LEFT JOIN cartons ca ON ca.id = c.carton_id
+       WHERE c.ticket = ? AND c.controle = 'reception' AND c.resultat IN ('conforme', 'ecart_quantite') ORDER BY c.id LIMIT 1`,
       [ticket.cle]
     );
+    // cosse d'une palette (dans un carton ou séparée) : c'est toute la palette qui se range
+    if (recu?.palette_cosses_id) {
+      return { palette: { id: recu.palette_cosses_id, scanne: { reference, lot, ticket: ticket.cle, carton_id: recu.carton_id } } };
+    }
+    if (recu?.carton_id) {
+      return { refus: ['carton', {
+        ...base, ligne: lignes.find((l) => l.id === recu.reception_id) ?? lignes[0],
+        message: `Cette cosse est dans le carton n° ${recu.carton} : rangez le carton entier, en scannant l'étiquette du carton puis l'emplacement.`,
+      }] };
+    }
     if (!recu) {
       return { refus: ['non_recu', {
         ...base, ligne: lignes[0],
@@ -440,7 +721,7 @@ async function emplacementSuggere(connexion, ligne, prevus) {
   const cible = liste.find((p) => p.ranges < p.quantite);
   if (!cible) return null;
   const niveau = R.lireCode(cible.code)?.niveau ?? null;
-  return { ...cible, niveau, tampon: R.estTampon(cible.code), elevateur: niveau === 4 };
+  return { ...cible, niveau, tampon: R.estTampon(cible.code), elevateur: niveau >= 4 };
 }
 
 // POST /api/mobile/rangement/suggestion  { qr }
@@ -451,10 +732,17 @@ router.post('/rangement/suggestion', async (req, res, next) => {
   try {
     await connexion.beginTransaction(); // attribution éventuelle d'un emplacement au colis
     const repondre = (resultat, donnees) => res.json(reponseControle(req, 'rangement', resultat, donnees).reponse);
+    const etiquette = C.lireEtiquetteCarton(req.body?.qr);
+    if (etiquette) {
+      const e = await paletteDeLEtiquette(connexion, etiquette);
+      if (e.refus) return repondre(...e.refus);
+      return repondre(...(await suggestionPalette(connexion, e.palette.id, e.palette.scanne)));
+    }
     const ticket = lireTicket(req.body?.qr);
     if (!ticket) return repondre('ticket_illisible', { message: messageIllisible(req.body?.qr) });
     const t = await ticketARanger(connexion, ticket);
     if (t.refus) return repondre(...t.refus);
+    if (t.palette) return repondre(...(await suggestionPalette(connexion, t.palette.id, t.palette.scanne)));
     const ligne = t.aRanger[0];
     const prevus = await emplacementsPrevus(connexion, ligne);
     const donnees = { ...t.base, ligne, quantite_attendue: ligne.attendue, emplacements_prevus: prevus };
@@ -463,7 +751,7 @@ router.post('/rangement/suggestion', async (req, res, next) => {
       const niveau = R.lireCode(affPalette.emplacement)?.niveau ?? null;
       return repondre('a_ranger', {
         ...donnees, emplacements_prevus: [{ code: affPalette.emplacement, quantite: 1 }],
-        extra: { suggestion: { code: affPalette.emplacement, quantite: 1, ranges: 0, niveau, tampon: R.estTampon(affPalette.emplacement), elevateur: niveau === 4 } },
+        extra: { suggestion: { code: affPalette.emplacement, quantite: 1, ranges: 0, niveau, tampon: R.estTampon(affPalette.emplacement), elevateur: niveau >= 4 } },
         message: `Colis n° ${ticket.colis} (palette ${affPalette.palette}) : allez en ${affPalette.emplacement} et scannez l'étiquette de l'emplacement.`,
       });
     }
@@ -483,8 +771,8 @@ router.post('/rangement/suggestion', async (req, res, next) => {
       const niveau = R.lireCode(aff.emplacement)?.niveau ?? null;
       return repondre('a_ranger', {
         ...donnees, emplacements_prevus: [{ code: aff.emplacement, quantite: 1 }],
-        extra: { suggestion: { ...place, code: aff.emplacement, niveau, tampon: R.estTampon(aff.emplacement), elevateur: niveau === 4 } },
-        message: `Colis n° ${ticket.colis} : allez en ${aff.emplacement}${niveau === 4 ? ' (élévateur)' : ''} et scannez l'étiquette de l'emplacement.`,
+        extra: { suggestion: { ...place, code: aff.emplacement, niveau, tampon: R.estTampon(aff.emplacement), elevateur: niveau >= 4 } },
+        message: `Colis n° ${ticket.colis} : allez en ${aff.emplacement}${niveau >= 4 ? ' (élévateur)' : ''} et scannez l'étiquette de l'emplacement.`,
       });
     }
     const cible = await emplacementSuggere(connexion, ligne, prevus);
@@ -508,6 +796,114 @@ router.post('/rangement/suggestion', async (req, res, next) => {
     connexion.release();
   }
 });
+
+// ---------- Rangement d'une palette de cosses : l'étiquette d'un de ses cartons (ou le ticket d'une cosse), puis l'emplacement ----------
+// La palette entière (cartons et cosses séparées) va seule sur un emplacement entièrement vide (cosses)
+// ou une place tampon libre ; toutes ses cosses entrent alors au stock, marquées de la palette.
+
+// Palette d'une étiquette de carton : { palette: { id, scanne } } ou { refus: [resultat, donnees] }
+async function paletteDeLEtiquette(connexion, etiquette) {
+  const [[carton]] = await connexion.query(`${C.SELECT_CARTON} WHERE c.date_etiquette = ?`, [etiquette.date]);
+  if (!carton || String(carton.reference).toUpperCase() !== etiquette.reference) {
+    return { refus: ['ticket_illisible', { message: "Étiquette de carton inconnue : réimprimez-la depuis le web (page Import)." }] };
+  }
+  if (!carton.palette_id) {
+    return { refus: ['sans_emplacement', { reference: carton.reference, lot: carton.lot, carton_id: carton.id, message: `Le carton n° ${carton.numero} n'est sur aucune palette : appelez le chef.` }] };
+  }
+  return { palette: { id: carton.palette_id, scanne: { reference: carton.reference, lot: carton.lot, carton_id: carton.id, ticket: null } } };
+}
+
+// Palette prête à ranger ; sinon { refus: [resultat, donnees] }. scanne : carton ou cosse lu par le magasinier.
+async function etatPalette(connexion, paletteId, scanne) {
+  const [[p]] = await connexion.query(`${P.SELECT_PALETTE} WHERE p.id = ? FOR UPDATE`, [paletteId]);
+  if (!p) return { refus: ['ticket_illisible', { message: 'Palette introuvable : appelez le chef.' }] };
+  const vue = await P.vuePalette(connexion, p);
+  const base = {
+    reference: scanne?.reference ?? vue.references[0] ?? null, lot: scanne?.lot ?? null, ticket: scanne?.ticket ?? null, quantite_ticket: vue.cosses,
+    carton_id: scanne?.carton_id ?? null, palette_cosses_id: p.id, extra: { palette_cosses: vue },
+  };
+  const nom = P.nomPalette(vue);
+  const [[imp]] = await connexion.query('SELECT id, statut, numero_livraison FROM imports WHERE id = ?', [p.import_id]);
+  if (p.statut === 'rangee') {
+    return { refus: ['deja_traite', { ...base, message: `${nom} est déjà rangée${vue.emplacement ? ' en ' + vue.emplacement : ''} : pas de double rangement.` }] };
+  }
+  if (p.statut === 'ouverte' || imp.statut !== 'ajoute') {
+    return { refus: ['import_en_attente', { ...base, message: `La réception de l'import ${imp.numero_livraison ?? 'n° ' + imp.id} n'est pas terminée : terminez-la, puis rangez la palette n° ${p.numero}.` }] };
+  }
+  if (vue.hors_stock) {
+    return { refus: ['sans_emplacement', { ...base, message: `${nom} porte ${vue.hors_stock} cosse(s) d'une référence absente du catalogue Articles : ajoutez-la au catalogue, puis « Entrer au stock » sur le web (page Import).` }] };
+  }
+  if (!vue.cosses) return { refus: ['deja_traite', { ...base, message: `La palette n° ${p.numero} est vide.` }] };
+  return { palette: p, vue, base, nom };
+}
+
+// Emplacement proposé pour la palette (suggestion, rien n'est enregistré) : [resultat, donnees]
+async function suggestionPalette(connexion, paletteId, scanne) {
+  const e = await etatPalette(connexion, paletteId, scanne);
+  if (e.refus) return e.refus;
+  const place = C.emplacementPourCarton(await occupation(connexion), await capaciteTampon(connexion));
+  if (!place) return ['sans_emplacement', { ...e.base, message: `Aucun emplacement vide ni place tampon libre pour la palette n° ${e.palette.numero} : appelez le chef.` }];
+  const niveau = R.lireCode(place.code)?.niveau ?? null;
+  return ['a_ranger', {
+    ...e.base, emplacements_prevus: [{ code: place.code, quantite: e.vue.cosses }],
+    extra: { palette_cosses: e.vue, suggestion: { code: place.code, quantite: e.vue.cosses, ranges: 0, niveau, tampon: place.tampon, elevateur: niveau >= 4 } },
+    message: `${e.nom} : posez toute la palette en ${place.code}${place.tampon ? ' (zone tampon : plus d’emplacement vide)' : ''}, puis scannez l'étiquette de l'emplacement.`,
+  }];
+}
+
+async function rangerPalette(connexion, req, paletteId, scanne, code) {
+  const e = await etatPalette(connexion, paletteId, scanne);
+  if (e.refus) return enregistrer(connexion, req, 'rangement', e.refus[0], { ...e.refus[1], emplacement_scanne: code });
+  const { palette, vue, base, nom } = e;
+  const donnees = { ...base, emplacement_scanne: code };
+  if (!R.estTampon(code) && R.typeEmplacement(code) !== 'connecteur') {
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', { ...donnees, message: `Une palette de cartons de cosses se range en haut (niveaux 3 et 4, 4 et 5 du bloc E), pas en ${code}. Rien n'est enregistré.` });
+  }
+  const occ = await occupation(connexion, true);
+  if (occ.some((l) => l.emplacement === code && Number(l.quantite) > 0)) {
+    const place = C.emplacementPourCarton(occ, await capaciteTampon(connexion));
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', {
+      ...donnees, emplacements_prevus: place ? [{ code: place.code, quantite: vue.cosses }] : [],
+      message: `${code} n'est pas vide : une palette va seule sur un emplacement entièrement vide${place ? ' (ex. ' + place.code + ')' : ''}. Rien n'est enregistré.`,
+    });
+  }
+  // Une ligne de stock par ligne d'import, marquée de la palette (et du carton s'il est seul sur cette ligne)
+  const cosses = (await P.cossesDeLaPalette(connexion, palette.id)).filter((x) => x.reception_id);
+  const parLigne = new Map();
+  for (const x of cosses) {
+    const g = parLigne.get(x.reception_id) ?? { n: 0, cartons: new Set() };
+    g.n++;
+    g.cartons.add(x.carton_id ?? 0);
+    parLigne.set(x.reception_id, g);
+  }
+  for (const [receptionId, g] of parLigne) {
+    const carton = g.cartons.size === 1 && !g.cartons.has(0) ? [...g.cartons][0] : null;
+    await connexion.query(
+      `INSERT INTO placements (reception_id, emplacement, quantite, carton_id, palette_cosses_id) VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite), carton_id = VALUES(carton_id), palette_cosses_id = VALUES(palette_cosses_id)`,
+      [receptionId, code, g.n, carton, palette.id]
+    );
+  }
+  await connexion.query("UPDATE cartons SET statut = 'range', emplacement = ?, date_rangement = NOW() WHERE palette_id = ?", [code, palette.id]);
+  await connexion.query("UPDATE palettes_cosses SET statut = 'rangee', emplacement = ?, date_rangee = NOW() WHERE id = ?", [code, palette.id]);
+  const premiere = cosses[0];
+  const reponse = await enregistrer(connexion, req, 'rangement', 'bon_emplacement', {
+    ...donnees, ligne: null, reception_id: premiere.reception_id, import_id: palette.import_id, ticket: premiere.ticket,
+    reference: premiere.reference, lot: premiere.lot, carton_id: premiere.carton_id,
+    emplacements_prevus: [{ code, quantite: cosses.length }],
+    extra: { palette_cosses: { ...(await P.vuePalette(connexion, { ...palette, statut: 'rangee', emplacement: code })) } },
+    message: `${nom} rangée en ${code} : ${cosses.length} cosse${cosses.length > 1 ? 's' : ''} ajoutée${cosses.length > 1 ? 's' : ''} au stock.`,
+  });
+  // Un contrôle de rangement par cosse : l'avancement de l'import compte les cosses rangées
+  for (const x of cosses.slice(1)) {
+    await connexion.query(
+      `INSERT INTO controles_mobile (uuid, controle, resultat, reference, lot, ticket, reception_id, import_id, carton_id, palette_cosses_id, emplacement_scanne, message, reponse, utilisateur_id)
+       VALUES (?, 'rangement', 'bon_emplacement', ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)`,
+      [crypto.randomUUID(), x.reference, x.lot, x.ticket, x.reception_id, palette.import_id, x.carton_id, palette.id, code, `Rangé avec la palette n° ${palette.numero}`, req.utilisateur.id]
+    );
+  }
+  return reponse;
+}
 
 // Rangement d'un colis : seul son emplacement imposé est accepté ; il entre alors au stock
 // Emplacement d'un colis donné par sa palette de réception (palette terminée), ou null
@@ -603,6 +999,12 @@ router.post('/rangement', operation('rangement', async (connexion, req) => {
       message: "Ce QR ne correspond à aucun emplacement du magasin. Rescannez l'étiquette de l'emplacement.",
     });
   }
+  const etiquette = C.lireEtiquetteCarton(req.body.qr);
+  if (etiquette) {
+    const e = await paletteDeLEtiquette(connexion, etiquette);
+    if (e.refus) return enregistrer(connexion, req, 'rangement', e.refus[0], { ...e.refus[1], emplacement_scanne: code });
+    return rangerPalette(connexion, req, e.palette.id, e.palette.scanne, code);
+  }
   if (!ticket) {
     return enregistrer(connexion, req, 'rangement', 'ticket_illisible', {
       emplacement_scanne: code, message: messageIllisible(req.body.qr),
@@ -611,6 +1013,7 @@ router.post('/rangement', operation('rangement', async (connexion, req) => {
   const { reference, lot } = ticket;
   const t = await ticketARanger(connexion, ticket, code);
   if (t.refus) return enregistrer(connexion, req, 'rangement', ...t.refus);
+  if (t.palette) return rangerPalette(connexion, req, t.palette.id, t.palette.scanne, code);
   if (ticket.cle) return rangerColis(connexion, req, ticket, t, code);
   // Ticket de lot (sans n° de colis) : les places du plan se remplissent dans l'ordre
   // Ligne dont l'emplacement prévu est celui scanné, sinon la plus ancienne
@@ -692,17 +1095,30 @@ router.get('/emplacement/:code', async (req, res, next) => {
     // Colis présents : rangés ici (scan de rangement), moins ceux sortis depuis (scan d'export)
     const [scansColis] = enPlace.length
       ? await db.query(
-          `SELECT reception_id, ticket, controle FROM controles_mobile
+          `SELECT reception_id, ticket, controle, emplacement_scanne FROM controles_mobile
            WHERE ticket IS NOT NULL AND reception_id IN (?)
-             AND ((controle = 'rangement' AND resultat = 'bon_emplacement' AND emplacement_scanne = ?)
+             AND ((controle = 'rangement' AND resultat = 'bon_emplacement')
                OR (controle = 'export' AND resultat IN ('prelevement_ok', 'sortie_terminee')))
            ORDER BY id`,
-          [enPlace.map((l) => l.reception_id), code]
+          [enPlace.map((l) => l.reception_id)]
         )
       : [[]];
     const sortis = new Set(scansColis.filter((x) => x.controle === 'export').map((x) => x.ticket));
+    // dernier rangement de chaque colis : une cosse descendue d'un carton ouvert n'est plus à l'emplacement de sa palette
+    const dernier = new Map();
+    for (const x of scansColis) if (x.controle === 'rangement') dernier.set(x.ticket, x.emplacement_scanne);
+    // cosse dans un carton rangé (pas descendue) : elle est là où est le carton (il a pu être déplacé)
+    const [dansCarton] = enPlace.length
+      ? await db.query(
+          `SELECT c.ticket, ca.emplacement FROM controles_mobile c JOIN cartons ca ON ca.id = c.carton_id
+           WHERE c.controle = 'reception' AND c.ticket IS NOT NULL AND c.reception_id IN (?) AND ca.statut = 'range'
+             AND NOT EXISTS (SELECT 1 FROM descentes_carton_cosses d WHERE d.ticket = c.ticket AND d.pose_le IS NOT NULL)`,
+          [enPlace.map((l) => l.reception_id)]
+        )
+      : [[]];
+    for (const x of dansCarton) if (dernier.has(x.ticket)) dernier.set(x.ticket, x.emplacement);
     const colisIci = (receptionId) => [...new Set(scansColis
-      .filter((x) => x.controle === 'rangement' && x.reception_id === receptionId && !sortis.has(x.ticket))
+      .filter((x) => x.controle === 'rangement' && x.reception_id === receptionId && !sortis.has(x.ticket) && dernier.get(x.ticket) === code)
       .map((x) => Number(String(x.ticket).split('|').pop())))].sort((a, b) => a - b);
     const produits = enPlace.map(({ reception_id, reference, lot, type, taille_bobine, quantite, date_reception }) => ({
       reference, lot, type, taille_bobine, quantite, date_reception, colis: colisIci(reception_id),
@@ -713,7 +1129,56 @@ router.get('/emplacement/:code', async (req, res, next) => {
        WHERE c.emplacement_scanne = ? ORDER BY c.date_controle DESC, c.id DESC LIMIT 10`,
       [code]
     );
-    res.json({ code, niveau: R.lireCode(code)?.niveau ?? null, tampon: R.estTampon(code), produits, controles });
+    // palette de cosses : seule sur l'emplacement, elle se déplace en entier
+    const ligneP = enPlace.find((l) => l.palette_cosses_id);
+    let palette = null;
+    if (ligneP) {
+      const [[p]] = await db.query(`${P.SELECT_PALETTE} WHERE p.id = ?`, [ligneP.palette_cosses_id]);
+      const v = await P.vuePalette(db, p);
+      palette = {
+        id: v.id, numero: v.numero, cosses: enPlace.reduce((t, l) => t + Number(l.quantite), 0),
+        cartons: v.cartons.filter((c) => c.en_stock > 0).map((c) => ({ numero: c.numero, reference: c.reference, lot: c.lot, en_stock: c.en_stock })),
+        separees: v.nb_separees,
+      };
+    }
+    res.json({ code, niveau: R.lireCode(code)?.niveau ?? null, tampon: R.estTampon(code), produits, controles, palette });
+  } catch (err) { next(err); }
+});
+
+// GET /api/mobile/carton?qr= : étiquette d'un carton de cosses → le carton, ses cosses, sa palette et où il est
+router.get('/carton', async (req, res, next) => {
+  try {
+    const etiquette = C.lireEtiquetteCarton(req.query.qr);
+    if (!etiquette) return res.status(400).json({ message: "Ce QR n'est pas une étiquette de carton." });
+    const [[carton]] = await db.query(`${C.SELECT_CARTON} WHERE c.date_etiquette = ?`, [etiquette.date]);
+    if (!carton || String(carton.reference).toUpperCase() !== etiquette.reference) {
+      return res.status(404).json({ message: 'Étiquette de carton inconnue : réimprimez-la depuis le web (page Import).' });
+    }
+    const vue = await C.vueCarton(db, carton);
+    const cosses = await C.cossesDuCarton(db, carton.id);
+    const sortis = await P.ticketsSortis(db, cosses.map((x) => x.ticket));
+    const [[imp]] = await db.query('SELECT id, numero_livraison FROM imports WHERE id = ?', [carton.import_id]);
+    let palette = null;
+    if (carton.palette_id) {
+      const [[p]] = await db.query(`${P.SELECT_PALETTE} WHERE p.id = ?`, [carton.palette_id]);
+      if (p) {
+        const v = await P.vuePalette(db, p);
+        palette = {
+          id: v.id, numero: v.numero, statut: v.statut, emplacement: v.emplacement, contenu: v.contenu, cosses: v.cosses, en_stock: v.en_stock,
+          nb_separees: v.nb_separees,
+          cartons: v.cartons.filter((c) => c.cosses > 0).map((c) => ({ id: c.id, numero: c.numero, reference: c.reference, lot: c.lot, cosses: c.cosses, en_stock: c.en_stock, statut: c.statut })),
+        };
+      }
+    }
+    res.json({
+      carton: {
+        id: vue.id, numero: vue.numero, reference: vue.reference, lot: vue.lot, statut: vue.statut, cosses: vue.cosses, pieces: vue.pieces,
+        en_stock: vue.en_stock, emplacement: vue.emplacement, date_etiquette: vue.date_etiquette,
+        liste: cosses.map((x) => ({ colis: x.colis, pieces: x.pieces, sortie: sortis.has(x.ticket), en_stock: !!x.reception_id })),
+      },
+      palette,
+      import: { id: imp.id, numero_livraison: imp.numero_livraison },
+    });
   } catch (err) { next(err); }
 });
 
@@ -821,4 +1286,4 @@ router.get('/journal', exigerGestionnaire(), async (req, res, next) => {
 
 module.exports = router;
 // Partagé avec la sortie préparée sur le mobile (routes/mobile-export.js)
-module.exports.outils = { enregistrer, operation, texteEmplacements, UUID, COULEURS, TITRES, ALERTES };
+module.exports.outils = { enregistrer, operation, texteEmplacements, UUID, COULEURS, TITRES, ALERTES, controleReception, lignesDuTicket };

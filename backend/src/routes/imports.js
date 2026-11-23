@@ -3,14 +3,21 @@ const db = require('../db');
 const { verrouillerStock, libererStock } = require('../verrou-stock');
 const R = require('../rangement');
 const { lignesEnStock, occupation, poserQuantite } = require('./stock');
-const { parametresRangement, limitesConnecteurs } = require('../parametres');
+const { parametresRangement } = require('../parametres');
 const { estGestionnaire, exigerGestionnaire, exigerRole } = require('../middleware/auth');
 const { lireMotif, enregistrerMouvements, enregistrerMouvement } = require('../historique');
 const RI = require('../reception-import');
 const { attribuerColis } = require('../affectations');
 const { typesDuCatalogue, normaliserReference } = require('../articles');
-const { capaciteTampon } = require('../parametres');
+const { capaciteTampon, modeReception } = require('../parametres');
 const { typePalette, nommer } = require('../palettes');
+const IR = require('../import-resume');
+const { expirerPreparations } = require('../reservations');
+const C = require('../cartons');
+const P = require('../palettes-cosses');
+const { pdfEtiquettesCartons } = require('../etiquettes');
+const { integrerHorsImport } = require('../surplus');
+const { lireFichierReferences } = require('../lire-excel');
 
 const router = express.Router();
 
@@ -80,7 +87,7 @@ async function importEnAttente(id, res) {
 router.get('/', async (req, res, next) => {
   try {
     const [imports] = await db.query(
-      `SELECT i.id, i.statut, i.reception, i.reception_ecarts, i.ajout_force, i.motif_force, i.source_id, i.numero_livraison,
+      `SELECT i.id, i.statut, i.mode, i.emballage, i.reception, i.reception_ecarts, i.ajout_force, i.motif_force, i.source_id, i.numero_livraison,
               DATE_FORMAT(i.reception_debut, '%Y-%m-%dT%H:%i:%s') AS reception_debut,
               DATE_FORMAT(i.reception_fin, '%Y-%m-%dT%H:%i:%s') AS reception_fin,
               rp.matricule AS reception_par,
@@ -147,11 +154,53 @@ router.get('/', async (req, res, next) => {
         affectations: parLigne.get(l.id) ?? [],
       });
     }
+    // Palettes de cosses (cartons et cosses séparées), cartons, et produits hors import en attente du catalogue Articles
+    const [cartons] = await db.query(`${C.SELECT_CARTON} ORDER BY c.import_id, c.numero`);
+    for (const c of cartons) {
+      const i = parImport.get(c.import_id);
+      if (i) i.cartons = [...(i.cartons ?? []), await C.vueCarton(db, c)];
+    }
+    const [palettesCosses] = await db.query(`${P.SELECT_PALETTE} ORDER BY p.import_id, p.numero`);
+    for (const p of palettesCosses) {
+      const i = parImport.get(p.import_id);
+      if (i) i.palettes_cosses = [...(i.palettes_cosses ?? []), await P.vuePalette(db, p)];
+    }
+    const [horsImport] = await db.query(
+      `SELECT import_id, reference, COUNT(*) AS n FROM controles_mobile
+       WHERE controle = 'reception' AND resultat = 'inconnu' AND reference IS NOT NULL AND reception_id IS NULL AND import_id IS NOT NULL
+       GROUP BY import_id, reference`
+    );
+    for (const h of horsImport) {
+      const i = parImport.get(h.import_id);
+      if (i?.reception === 'terminee') i.hors_import_en_attente = [...(i.hors_import_en_attente ?? []), { reference: h.reference, colis: Number(h.n) }];
+    }
+    // Sorties urgentes : colis sortis vers la production pendant la réception (ou posés, en attente de sortie)
+    const [urgences] = await db.query(
+      `SELECT u.id, u.import_id, u.reception_id, u.colis, u.reference, u.lot, u.destination, u.statut, u.emplacement, u.stock_existant, u.export_id,
+              m.matricule AS par, a.matricule AS autorise_par,
+              DATE_FORMAT(u.date_demande, '%Y-%m-%dT%H:%i:%s') AS date_demande,
+              DATE_FORMAT(u.date_sortie, '%Y-%m-%dT%H:%i:%s') AS date_sortie
+       FROM sorties_urgentes u
+       LEFT JOIN utilisateurs m ON m.id = u.utilisateur_id
+       LEFT JOIN utilisateurs a ON a.id = u.autorise_par
+       WHERE u.statut <> 'annulee' OR u.date_posee IS NOT NULL
+       ORDER BY u.date_demande, u.id`
+    );
+    for (const u of urgences) {
+      const i = parImport.get(u.import_id);
+      if (i) i.urgences = [...(i.urgences ?? []), u];
+    }
     for (const i of parImport.values()) {
+      i.cartons = i.cartons ?? [];
+      i.palettes_cosses = i.palettes_cosses ?? [];
+      i.hors_import_en_attente = i.hors_import_en_attente ?? [];
+      i.urgences = i.urgences ?? [];
       const a = av.get(i.id);
       i.ajout_force = !!i.ajout_force;
       i.etape = RI.etape(i, a);
-      i.avancement = a && { attendus: a.attendus, recus: a.recus, manquants: a.manquants, en_trop: a.en_trop, hors_import: a.hors_import, ranges: a.ranges, anomalies: i.reception === 'terminee' ? a.anomalies : a.anomalies.filter((x) => x.type !== 'manquant') };
+      i.avancement = a && { attendus: a.attendus, recus: a.recus, manquants: a.manquants, en_trop: a.en_trop, hors_import: a.hors_import, ranges: a.ranges, colis_recus: a.colis_recus, anomalies: RI.anomaliesAffichees(i, a) };
+      // Import résumé : références annoncées (total de pièces) et ce qui en est reçu
+      i.pieces = a?.pieces ?? null;
     }
     res.json([...parImport.values()]);
   } catch (err) { next(err); }
@@ -204,9 +253,9 @@ router.put('/affectations/:id', exigerGestionnaire(), async (req, res, next) => 
       parLigne.set(c.reception_id, l);
     }
     const produits = [...parLigne.values()];
-    const { capaciteTampon: capacite, limites } = await parametresRangement(connexion);
+    const { capaciteTampon: capacite } = await parametresRangement(connexion);
     const enPlace = (await occupation(connexion, true)).filter((l) => l.emplacement);
-    const refus = R.verifierPlan(produits.map((p) => ({ id: p.id, emplacement: code, quantite: p.quantite })), produits, enPlace, capacite, limites);
+    const refus = R.verifierPlan(produits.map((p) => ({ id: p.id, emplacement: code, quantite: p.quantite })), produits, enPlace, capacite);
     if (refus) return refuser(409, refus);
     if (!a.palette_id) {
       // Plan de rangement (validation de la réception) : la place réservée suit le colis
@@ -248,16 +297,12 @@ router.put('/affectations/:id', exigerGestionnaire(), async (req, res, next) => 
 // Un import dont un produit est invalide n'est pas copié : il est signalé pour correction.
 
 // Contrôle d'un produit italien ; renvoie la raison du refus ou null
-function erreurProduitItalie(p, limites) {
-  if (!p.type) return `référence ${p.reference} absente du catalogue Articles (Administration → Articles) : type inconnu`;
+function erreurProduitItalie(p) {
+  if (!p.type) return `référence ${p.reference} absente du catalogue Articles (page Articles) : type inconnu`;
   if (!TYPES.includes(p.type)) return `type « ${p.type} » inconnu`;
   if (p.type === 'bobine' && !TAILLES_BOBINE.includes(p.taille_bobine)) return `bobine ${p.reference} sans taille`;
   if (!String(p.reference || '').trim() || !String(p.lot || '').trim()) return 'référence ou lot manquant';
   if (!Number.isInteger(Number(p.quantite)) || Number(p.quantite) <= 0) return `quantité invalide pour ${p.reference}`;
-  if (p.type === 'connecteur') {
-    const refus = R.controlerCarton(p, limites);
-    if (refus) return `connecteur ${p.reference} : ${refus.charAt(0).toLowerCase()}${refus.slice(1)}`;
-  }
   return null;
 }
 
@@ -265,7 +310,9 @@ function erreurProduitItalie(p, limites) {
 router.get('/synchronisation', async (req, res, next) => {
   try {
     const [[{ disponibles }]] = await db.query(
-      'SELECT COUNT(*) AS disponibles FROM italie_imports WHERE id NOT IN (SELECT source_id FROM imports WHERE source_id IS NOT NULL)'
+      `SELECT COUNT(*) AS disponibles FROM italie_imports
+       WHERE id NOT IN (SELECT source_id FROM imports WHERE source_id IS NOT NULL)
+         AND id NOT IN (SELECT source_id FROM imports_supprimes WHERE source_id IS NOT NULL)`
     );
     const [lignes] = await db.query(
       "SELECT DATE_FORMAT(valeur, '%Y-%m-%dT%H:%i:%s') AS derniere FROM parametres WHERE cle = 'derniere_synchronisation'"
@@ -277,11 +324,11 @@ router.get('/synchronisation', async (req, res, next) => {
 // Copie les imports italiens pas encore présents (seulement : ids italiens à copier, sinon tous).
 // Le type vient du catalogue Articles d'après la référence. Renvoie { ajoutes, ignores }.
 async function copierImportsItalie(connexion, utilisateurId, seulement = null) {
-  const limites = await limitesConnecteurs(connexion);
   const [nouveaux] = await connexion.query(
     `SELECT id, numero, DATE_FORMAT(date_envoi, '%Y-%m-%d %H:%i:%s') AS date_envoi
      FROM italie_imports
      WHERE id NOT IN (SELECT source_id FROM imports WHERE source_id IS NOT NULL)
+       AND id NOT IN (SELECT source_id FROM imports_supprimes WHERE source_id IS NOT NULL) -- supprimé par l'administrateur
        ${seulement ? 'AND id IN (?)' : ''}
      ORDER BY date_envoi, id`,
     seulement ? [seulement] : []
@@ -302,7 +349,7 @@ async function copierImportsItalie(connexion, utilisateurId, seulement = null) {
       ignores.push({ numero: it.numero, raison: 'aucun produit' });
       continue;
     }
-    const erreur = produits.map((p) => erreurProduitItalie(p, limites)).find(Boolean);
+    const erreur = produits.map((p) => erreurProduitItalie(p)).find(Boolean);
     if (erreur) {
       ignores.push({ numero: it.numero, raison: erreur });
       continue;
@@ -402,10 +449,8 @@ router.post('/manuel', exigerRole('admin'), async (req, res, next) => {
     const catalogue = await typesDuCatalogue(connexion, produits.map((p) => p.reference));
     const inconnues = [...new Set(produits.filter((p) => !catalogue.has(p.reference)).map((p) => p.reference))];
     if (inconnues.length) {
-      return refuser(400, `Référence(s) absente(s) du catalogue Articles : ${inconnues.join(', ')}. Ajoutez-les dans Administration → Articles.`);
+      return refuser(400, `Référence(s) absente(s) du catalogue Articles : ${inconnues.join(', ')}. Ajoutez-les dans la page Articles.`);
     }
-    const sansMesures = produits.find((p) => catalogue.get(p.reference).type === 'connecteur' && [p.longueur, p.largeur, p.hauteur, p.poids].some((v) => v === null));
-    if (sansMesures) return refuser(400, `${sansMesures.reference} est un connecteur : indiquez les dimensions (cm) et le poids (kg) d'un carton`);
     const [it] = await connexion.query(
       'INSERT INTO italie_imports (numero, date_envoi, commentaire) VALUES (?, NOW(), ?)',
       [numero, `Saisie manuelle (matricule ${req.utilisateur.matricule})`]
@@ -430,6 +475,93 @@ router.post('/manuel', exigerRole('admin'), async (req, res, next) => {
   }
 });
 
+// ---------- Import résumé : référence + total de pièces (fichier de l'Italie sans lot ni colis) ----------
+//
+// Le chef (ou l'administrateur) colle les lignes « Codice / Somma di quantità » copiées depuis Excel ou le PDF.
+// L'import arrive « en attente » ; à la réception mobile, chaque ticket scanné crée la ligne référence + lot
+// et ses pièces s'ajoutent au compteur de la référence. Le type vient du catalogue Articles.
+
+// Lignes collées -> références lues, avec leur type d'après le catalogue, et les problèmes à corriger
+async function lireImportResume(connexion, texte) {
+  // références du catalogue : une ligne « STAFFA 048290111 1 200 » se coupe après la référence connue
+  const [articles] = await connexion.query('SELECT reference FROM articles_mp');
+  const connues = new Set(articles.map((x) => normaliserReference(x.reference)));
+  const { lignes, erreurs, erreursLignes } = IR.lireTexte(texte, connues);
+  const catalogue = await typesDuCatalogue(connexion, lignes.map((l) => l.reference));
+  const references = lignes.map((l) => ({ ...l, ...(catalogue.get(l.reference) ?? { type: null, taille_bobine: null, type_cosse: null }) }));
+  const inconnues = references.filter((r) => !r.type).map((r) => r.reference);
+  const problemes = [...erreurs];
+  if (!references.length && !erreurs.length) problemes.push('Aucune ligne « référence + quantité » trouvée dans le texte collé');
+  if (inconnues.length) problemes.push(`Référence(s) absente(s) du catalogue Articles : ${inconnues.join(', ')}. Ajoutez-les dans la page Articles (type : cosse plate ou axiale, bobine…).`);
+  return { references, problemes, erreurs_lignes: erreursLignes, total: references.reduce((t, r) => t + r.pieces, 0) };
+}
+
+// POST /api/imports/resume/fichier?nom=PackingKLTN_291026.xlsx  (corps : le fichier, application/octet-stream)
+// Fichier de l'Italie (Excel .xlsx ou .xls, ou .csv) → lignes « référence <tab> quantité », à vérifier dans l'aperçu
+router.post('/resume/fichier', exigerGestionnaire(), express.raw({ type: '*/*', limit: '15mb' }), async (req, res, next) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ message: 'Fichier vide' });
+    const r = await lireFichierReferences(req.body, req.query.nom);
+    if (!r.lignes) return res.status(400).json({ message: "Aucune ligne « référence + quantité » trouvée dans ce fichier (colonnes « Codice » et « Somma di quantità »)." });
+    res.json(r);
+  } catch (err) {
+    if (!err.status) err.message = `Fichier illisible : ${err.message}`;
+    if (!err.status) err.status = 400;
+    next(err);
+  }
+});
+
+// POST /api/imports/resume/apercu  { texte } : ce qui sera créé, sans rien enregistrer
+router.post('/resume/apercu', exigerGestionnaire(), async (req, res, next) => {
+  try {
+    res.json(await lireImportResume(db, req.body?.texte));
+  } catch (err) { next(err); }
+});
+
+// POST /api/imports/resume  { numero, date_envoi?, texte }
+router.post('/resume', exigerGestionnaire(), async (req, res, next) => {
+  const numero = String(req.body?.numero ?? '').trim().toUpperCase();
+  if (numero.length < 3 || numero.length > 50) return res.status(400).json({ message: 'Indiquez le n° de livraison (3 à 50 caractères)' });
+  const dateEnvoi = String(req.body?.date_envoi ?? '').trim();
+  if (dateEnvoi && !/^\d{4}-\d{2}-\d{2}$/.test(dateEnvoi)) return res.status(400).json({ message: "Date d'envoi invalide (AAAA-MM-JJ)" });
+  const connexion = await db.getConnection();
+  try {
+    await verrouillerStock(connexion);
+    await connexion.beginTransaction();
+    const refuser = async (status, message) => {
+      await connexion.rollback();
+      res.status(status).json({ message });
+    };
+    const [[deja]] = await connexion.query(
+      'SELECT 1 AS ok FROM italie_imports WHERE numero = ? UNION SELECT 1 FROM imports WHERE numero_livraison = ? LIMIT 1',
+      [numero, numero]
+    );
+    if (deja) return refuser(409, `Le n° de livraison ${numero} existe déjà`);
+    const { references, problemes } = await lireImportResume(connexion, req.body?.texte);
+    if (problemes.length) return refuser(400, problemes.join(' '));
+    const [r] = await connexion.query(
+      `INSERT INTO imports (numero_livraison, mode, date_envoi, statut, date_creation, cree_par)
+       VALUES (?, 'resume', ?, 'en_attente', NOW(), ?)`,
+      [numero, dateEnvoi ? `${dateEnvoi} 00:00:00` : null, req.utilisateur.id]
+    );
+    for (const ref of references) {
+      await connexion.query(
+        `INSERT INTO imports_attendus (import_id, reference, type, taille_bobine, type_cosse, pieces)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [r.insertId, ref.reference, ref.type, ref.type === 'bobine' ? ref.taille_bobine : null, ref.type === 'cosse' ? (ref.type_cosse ?? 'plat') : null, ref.pieces]
+      );
+    }
+    await connexion.commit();
+    res.status(201).json({ id: r.insertId, numero, references: references.length, pieces: references.reduce((t, x) => t + x.pieces, 0) });
+  } catch (err) {
+    await connexion.rollback();
+    next(err);
+  } finally {
+    await libererStock(connexion);
+    connexion.release();
+  }
+});
+
 // POST /api/imports : nouvel import (arrivage), en attente
 router.post('/', async (req, res, next) => {
   try {
@@ -441,20 +573,302 @@ router.post('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// DELETE /api/imports/:id : supprimer un import encore en attente (et ses produits)
-router.delete('/:id', async (req, res, next) => {
+// ---------- Étiquettes des cartons de cosses ----------
+// QR : « référence;lot;pièces;JJ/MM/AAAA HH:MM:SS.mmm ». La date est celle de la 1re impression (date système),
+// unique à la milliseconde ; une réimpression redonne exactement la même étiquette.
+
+// Donne leur date aux cartons qui n'en ont pas, puis écrit le PDF (une étiquette par page)
+async function imprimerCartons(cartons, res) {
+  const connexion = await db.getConnection();
+  const pages = [];
   try {
-    if (!(await importEnAttente(req.params.id, res))) return;
-    await db.query('DELETE FROM imports WHERE id = ?', [req.params.id]);
-    res.status(204).end();
+    await verrouillerStock(connexion);
+    await connexion.beginTransaction();
+    for (const brut of cartons) {
+      let c = brut;
+      if (!c.date_etiquette) {
+        const date = await C.nouvelleDateEtiquette(connexion);
+        await connexion.query('UPDATE cartons SET date_etiquette = ? WHERE id = ?', [date, c.id]);
+        c = { ...c, date_etiquette: date };
+      }
+      const vue = await C.vueCarton(connexion, c);
+      const [[imp]] = await connexion.query('SELECT numero_livraison FROM imports WHERE id = ?', [c.import_id]);
+      pages.push({ ...vue, numero_livraison: imp.numero_livraison, pieces: vue.pieces ?? 0, qr: C.qrCarton({ ...c, pieces: vue.pieces ?? 0 }) });
+    }
+    await connexion.commit();
+  } catch (err) {
+    await connexion.rollback();
+    throw err;
+  } finally {
+    await libererStock(connexion);
+    connexion.release();
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="etiquettes-cartons-${pages.map((p) => p.numero).join('-').slice(0, 60)}.pdf"`);
+  res.setHeader('X-Etiquettes', String(pages.length));
+  await pdfEtiquettesCartons(pages, res);
+}
+
+// POST /api/imports/cartons/:id/etiquette : étiquette d'un carton terminé (ou réimpression)
+router.post('/cartons/:id/etiquette', async (req, res, next) => {
+  try {
+    const [[c]] = await db.query(`${C.SELECT_CARTON} WHERE c.id = ?`, [req.params.id]);
+    if (!c) return res.status(404).json({ message: 'Carton introuvable' });
+    if (c.statut === 'ouvert') return res.status(409).json({ message: `Le carton n° ${c.numero} est encore ouvert : terminez-le sur le mobile avant d'imprimer son étiquette.` });
+    await imprimerCartons([c], res);
   } catch (err) { next(err); }
+});
+
+// POST /api/imports/:id/cartons/etiquettes : les étiquettes pas encore imprimées de l'import (sinon toutes)
+// Import détaillé (une ligne par référence et lot) : même tableau que le pointage par référence, en produits
+function pointageDetaille(a) {
+  const references = [...a.lignes.values()].map((l) => {
+    const recues = l.recus + l.en_trop;
+    const ecart = recues - l.attendue;
+    return {
+      reference: l.reference, type: l.type, taille_bobine: l.taille_bobine, type_cosse: l.type_cosse,
+      attendues: l.attendue, recues, colis: recues, ecart,
+      lots: recues ? [{ lot: l.lot, colis: recues }] : [{ lot: l.lot, colis: 0 }],
+      statut: recues === 0 ? 'non_recue' : ecart === 0 ? 'conforme' : ecart < 0 ? 'manquant' : 'en_trop',
+    };
+  });
+  return {
+    references,
+    attendues: references.reduce((t, r) => t + r.attendues, 0),
+    recues: references.reduce((t, r) => t + r.recues, 0),
+    a_reclamer: references.filter((r) => r.statut !== 'conforme').length,
+  };
+}
+
+// GET /api/imports/:id/pointage/pdf : pointage d'un import (annoncées, reçues, écart, lots, bilan), en PDF.
+// Import par référence : en pièces ; import détaillé : en produits (une ligne par référence et lot).
+router.get('/:id/pointage/pdf', async (req, res, next) => {
+  try {
+    const [[imp]] = await db.query('SELECT id, numero_livraison, mode, date_creation FROM imports WHERE id = ?', [req.params.id]);
+    if (!imp) return res.status(404).json({ message: 'Import introuvable' });
+    const a = (await RI.avancement(db, [imp.id])).get(imp.id);
+    const pointage = imp.mode === 'resume' ? a.pieces : pointageDetaille(a);
+    if (!pointage.references.length) return res.status(404).json({ message: 'Cet import est vide : rien à mettre dans le PDF.' });
+    const nom = String(imp.numero_livraison ?? `import-${imp.id}`).replace(/[^\w.-]+/g, '_');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="pointage-${nom}.pdf"`);
+    require('../pointage-pdf').pdfPointage(res, imp, pointage, {}, imp.mode === 'resume' ? a.colis_recus : pointage.recues);
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/cartons/etiquettes', async (req, res, next) => {
+  try {
+    const [cartons] = await db.query(`${C.SELECT_CARTON} WHERE c.import_id = ? AND c.statut <> 'ouvert' ORDER BY c.numero`, [req.params.id]);
+    if (!cartons.length) return res.status(404).json({ message: "Aucun carton terminé dans cet import : terminez les cartons sur le mobile." });
+    const nouvelles = cartons.filter((c) => !c.date_etiquette);
+    await imprimerCartons(nouvelles.length ? nouvelles : cartons, res);
+  } catch (err) { next(err); }
+});
+
+// POST /api/imports/:id/hors-import : produits reçus hors import dont la référence a été ajoutée au catalogue
+// Articles depuis la réception : ils entrent au stock (une ligne d'import chacun ; le plan de rangement suit
+// si l'import est déjà au stock). Leur réclamation existe déjà.
+router.post('/:id/hors-import', exigerGestionnaire(), async (req, res, next) => {
+  const connexion = await db.getConnection();
+  try {
+    await verrouillerStock(connexion);
+    await connexion.beginTransaction();
+    const [[imp]] = await connexion.query('SELECT id, statut, reception FROM imports WHERE id = ? FOR UPDATE', [req.params.id]);
+    if (!imp) {
+      await connexion.rollback();
+      return res.status(404).json({ message: 'Import introuvable' });
+    }
+    if (imp.reception !== 'terminee') {
+      await connexion.rollback();
+      return res.status(409).json({ message: "La réception mobile de cet import n'est pas terminée." });
+    }
+    const r = await integrerHorsImport(connexion, imp.id, req.utilisateur.id);
+    if (imp.statut === 'ajoute' && r.integres.length) {
+      // Import déjà au stock : places réservées pour ces nouvelles lignes (hors cartons), puis emplacement de chaque colis
+      const ids = new Set(r.integres.map((x) => x.id));
+      const produits = (await produitsImport(connexion, imp.id)).filter((p) => ids.has(p.id));
+      const enPlace = (await occupation(connexion, true)).filter((l) => l.emplacement);
+      for (const p of R.proposerPlan(produits, enPlace, await parametresRangement(connexion))) {
+        if (!p.emplacement) await poserQuantite(connexion, p.id, null, p.quantite);
+        else {
+          await connexion.query(
+            `INSERT INTO plans_rangement (reception_id, emplacement, quantite, ranges) VALUES (?, ?, ?, 0)
+             ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)`,
+            [p.id, p.emplacement, p.quantite]
+          );
+        }
+      }
+      for (const p of produits) await attribuerColis(connexion, p.id);
+    }
+    await connexion.commit();
+    res.json(r);
+  } catch (err) {
+    await connexion.rollback();
+    next(err);
+  } finally {
+    await libererStock(connexion);
+    connexion.release();
+  }
+});
+
+// ---------- Suppression d'un import (administrateur) ----------
+//
+// L'administrateur peut supprimer n'importe quel import, en attente ou déjà au stock. Sont effacés : l'import,
+// ses lignes, ses produits encore en stock, ses réclamations, ses palettes et plans de rangement.
+// Sont gardés : l'historique des sorties (export_details) et des déplacements, les scans du mobile.
+// Traçabilité : motif obligatoire, copie JSON de l'import (imports_supprimes), retrait du stock noté dans
+// l'historique des emplacements. Refusé si une sortie en cours sur le mobile utilise ses produits.
+
+// Ce que la suppression effacerait (verrou : dans la transaction de la suppression)
+async function bilanSuppression(connexion, id, verrou = false) {
+  const [[imp]] = await connexion.query(
+    `SELECT id, source_id, numero_livraison, mode, statut, reception,
+            DATE_FORMAT(date_creation, '%Y-%m-%dT%H:%i:%s') AS date_creation
+     FROM imports WHERE id = ? ${verrou ? 'FOR UPDATE' : ''}`,
+    [id]
+  );
+  if (!imp) return null;
+  await expirerPreparations(connexion);
+  const [lignes] = await connexion.query('SELECT * FROM receptions WHERE import_id = ? ORDER BY id', [id]);
+  const [stock] = await connexion.query(
+    `SELECT p.id, p.reception_id, p.emplacement, p.quantite, r.reference, r.lot, r.type, r.taille_bobine, r.type_cosse
+     FROM placements p JOIN receptions r ON r.id = p.reception_id
+     WHERE r.import_id = ? ORDER BY p.emplacement, r.reference ${verrou ? 'FOR UPDATE' : ''}`,
+    [id]
+  );
+  const [reclamations] = await connexion.query(
+    'SELECT * FROM reclamations WHERE import_id = ? OR reception_id IN (SELECT id FROM receptions WHERE import_id = ?) ORDER BY id',
+    [id, id]
+  );
+  const [[{ scans }]] = await connexion.query(
+    'SELECT COUNT(*) AS scans FROM controles_mobile WHERE import_id = ? OR reception_id IN (SELECT id FROM receptions WHERE import_id = ?)',
+    [id, id]
+  );
+  const [[{ historique }]] = await connexion.query(
+    'SELECT COUNT(*) AS historique FROM mouvements_emplacement WHERE reception_id IN (SELECT id FROM receptions WHERE import_id = ?)',
+    [id]
+  );
+  const [[{ sorties }]] = await connexion.query(
+    'SELECT COALESCE(SUM(d.quantite), 0) AS sorties FROM export_details d JOIN receptions r ON r.id = d.reception_id WHERE r.import_id = ?',
+    [id]
+  );
+  const [enCours] = await connexion.query(
+    `SELECT DISTINCT p.id, p.reference, u.matricule FROM preparation_lignes l
+     JOIN preparations_export p ON p.id = l.preparation_id AND p.statut = 'en_cours'
+     LEFT JOIN utilisateurs u ON u.id = p.utilisateur_id
+     WHERE l.reception_id IN (SELECT id FROM receptions WHERE import_id = ?)`,
+    [id]
+  );
+  const [attendus] = await connexion.query('SELECT reference, type, type_cosse, taille_bobine, pieces FROM imports_attendus WHERE import_id = ?', [id]);
+  return {
+    imp, lignes, stock, reclamations, attendus,
+    resume: {
+      id: imp.id,
+      numero_livraison: imp.numero_livraison,
+      statut: imp.statut,
+      reception: imp.reception,
+      lignes: lignes.length,
+      produits_en_stock: stock.reduce((t, s) => t + s.quantite, 0),
+      emplacements: [...new Set(stock.map((s) => s.emplacement).filter(Boolean))],
+      non_ranges: stock.filter((s) => !s.emplacement).reduce((t, s) => t + s.quantite, 0),
+      reclamations: reclamations.length,
+      scans: Number(scans),
+      historique: Number(historique), // lignes d'historique des emplacements de ses produits
+      sorties_faites: Number(sorties),
+      sorties_en_cours: enCours.map((p) => ({ id: p.id, reference: p.reference, par: p.matricule })),
+      // texte à taper pour confirmer
+      confirmation: imp.numero_livraison ?? String(imp.id),
+    },
+  };
+}
+
+// GET /api/imports/:id/suppression : ce que la suppression effacerait (administrateur)
+router.get('/:id/suppression', exigerRole('admin'), async (req, res, next) => {
+  try {
+    const bilan = await bilanSuppression(db, Number(req.params.id));
+    if (!bilan) return res.status(404).json({ message: 'Import introuvable' });
+    res.json(bilan.resume);
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/imports/:id  { motif, confirmation, complet? } (administrateur)
+// confirmation : le n° de livraison de l'import (ou son n° s'il n'en a pas), tapé à la main.
+// complet : efface aussi l'historique des emplacements de ses produits et ses scans mobiles (aucune trace
+// sauf la ligne « qui, quand, pourquoi » de imports_supprimes) ; les sorties déjà faites restent.
+router.delete('/:id', exigerRole('admin'), async (req, res, next) => {
+  const id = Number(req.params.id);
+  const motif = String(req.body?.motif ?? '').trim();
+  if (motif.length < 3) return res.status(400).json({ message: 'Indiquez le motif de la suppression' });
+  if (motif.length > 255) return res.status(400).json({ message: 'Le motif ne doit pas dépasser 255 caractères' });
+  const connexion = await db.getConnection();
+  try {
+    await verrouillerStock(connexion); // une opération sur le stock à la fois
+    await connexion.beginTransaction();
+    const refuser = async (status, message) => {
+      await connexion.rollback();
+      res.status(status).json({ message });
+    };
+    const bilan = await bilanSuppression(connexion, id, true);
+    if (!bilan) return refuser(404, 'Import introuvable');
+    const { imp, stock, resume } = bilan;
+    const tape = String(req.body?.confirmation ?? '').trim().toUpperCase();
+    if (tape !== resume.confirmation.toUpperCase()) {
+      return refuser(400, `Pour confirmer, tapez exactement « ${resume.confirmation} »`);
+    }
+    if (resume.sorties_en_cours.length) {
+      const p = resume.sorties_en_cours[0];
+      return refuser(409, `Une sortie en cours sur le mobile utilise des produits de cet import (${p.reference}${p.par ? ', matricule ' + p.par : ''}) : terminez-la ou annulez-la d'abord.`);
+    }
+    const complet = req.body?.complet === true;
+    // Copie de l'import tel qu'il était (suppression complète : rien n'est gardé)
+    const contenu = JSON.stringify(complet
+      ? { complet: true }
+      : { import: imp, lignes: bilan.lignes, stock, reclamations: bilan.reclamations, attendus: bilan.attendus });
+    await connexion.query(
+      `INSERT INTO imports_supprimes (import_id, source_id, numero_livraison, statut, produits_retires, motif, contenu, utilisateur_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [imp.id, imp.source_id, imp.numero_livraison, imp.statut, resume.produits_en_stock, motif, contenu, req.utilisateur.id]
+    );
+    // Retrait du stock noté dans l'historique des emplacements (l'emplacement est-il vide ensuite ?)
+    const ranges = stock.filter((s) => s.emplacement);
+    if (complet) {
+      // Toutes ses données : historique des emplacements de ses produits et scans du mobile
+      await connexion.query('DELETE FROM mouvements_emplacement WHERE reception_id IN (SELECT id FROM receptions WHERE import_id = ?)', [imp.id]);
+      await connexion.query('DELETE FROM controles_mobile WHERE import_id = ? OR reception_id IN (SELECT id FROM receptions WHERE import_id = ?)', [imp.id, imp.id]);
+    } else if (ranges.length) {
+      const [occupe] = await connexion.query(
+        'SELECT emplacement, SUM(quantite) AS q FROM placements WHERE emplacement IN (?) GROUP BY emplacement',
+        [[...new Set(ranges.map((s) => s.emplacement))]]
+      );
+      const reste = new Map(occupe.map((o) => [o.emplacement, Number(o.q)]));
+      for (const s of ranges) reste.set(s.emplacement, reste.get(s.emplacement) - s.quantite);
+      const nom = imp.numero_livraison ? `l'import ${imp.numero_livraison}` : `l'import n° ${imp.id}`;
+      await enregistrerMouvements(connexion, ranges.map((s) => ({
+        origine: 'suppression_import', ligne: { ...s, id: s.reception_id }, quantite: s.quantite, depuis: s.emplacement, vers: null,
+        commentaire: `Suppression de ${nom} : ${motif}`.slice(0, 255), utilisateurId: req.utilisateur.id,
+        depuisLiberee: reste.get(s.emplacement) === 0,
+      })));
+    }
+    await connexion.query('DELETE FROM imports WHERE id = ?', [imp.id]);
+    // Un import en attente de moins : les suivants déjà réceptionnés sans écart passent au stock, dans l'ordre d'arrivée
+    const automatiques = imp.statut === 'en_attente' ? await ajoutsAutomatiques(connexion) : [];
+    await connexion.commit();
+    res.json({
+      id: imp.id, numero_livraison: imp.numero_livraison, statut: imp.statut, complet,
+      produits_retires: resume.produits_en_stock, reclamations: resume.reclamations, ajoutes_automatiquement: automatiques,
+    });
+  } catch (err) {
+    await connexion.rollback();
+    next(err);
+  } finally {
+    await libererStock(connexion);
+    connexion.release();
+  }
 });
 
 // POST /api/imports/:id/produits
 //   bobine / cosse : { type, taille_bobine, reference, lot, quantite }
-//   connecteur     : { type, reference, lot, cartons: [{ longueur, largeur, hauteur, poids }] }
-//                    chaque carton (cm, kg) devient une ligne de quantité 1 ;
-//                    un carton qui ne peut aller sur aucune palette est refusé.
+//   connecteur     : { type, reference, lot, quantite } (cartons, sans dimensions ni poids)
 router.post('/:id/produits', async (req, res, next) => {
   try {
     if (!(await importEnAttente(req.params.id, res))) return;
@@ -470,30 +884,6 @@ router.post('/:id/produits', async (req, res, next) => {
     const commentaire = String(req.body.commentaire ?? '').trim() || null;
     if (commentaire && commentaire.length > 255) {
       return res.status(400).json({ message: 'Le commentaire ne doit pas dépasser 255 caractères' });
-    }
-
-    if (type === 'connecteur') {
-      const cartons = Array.isArray(req.body.cartons) ? req.body.cartons : [];
-      if (!cartons.length) return res.status(400).json({ message: 'Ajoutez au moins un carton (dimensions et poids)' });
-      const limites = await limitesConnecteurs();
-      for (const [i, c] of cartons.entries()) {
-        const refus = R.controlerCarton(c, limites);
-        if (refus) return res.status(400).json({ message: `Carton ${i + 1} : ${refus}` });
-      }
-      const ids = [];
-      for (const c of cartons) {
-        const [r] = await db.query(
-          `INSERT INTO receptions (import_id, type, taille_bobine, reference, lot, date_reception, quantite,
-                                   longueur, largeur, hauteur, poids, commentaire, utilisateur_id)
-           VALUES (?, 'connecteur', NULL, ?, ?, NOW(), 1, ?, ?, ?, ?, ?, ?)`,
-          [
-            req.params.id, reference.trim().toUpperCase(), lot.trim().toUpperCase(),
-            Number(c.longueur), Number(c.largeur), Number(c.hauteur), Number(c.poids), commentaire, req.utilisateur.id,
-          ]
-        );
-        ids.push(r.insertId);
-      }
-      return res.status(201).json({ id: ids[0], ids });
     }
 
     if (!Number.isInteger(quantite) || quantite <= 0) {
@@ -554,7 +944,13 @@ async function produitsImport(connexion, importId) {
     `SELECT r.id, r.type, r.taille_bobine, r.type_cosse, r.reference, r.lot,
             r.quantite - COALESCE(rc.quantite, 0)
               -- bobines déjà rangées palette par palette pendant la réception
-              - (SELECT COUNT(*) FROM affectations_colis a WHERE a.reception_id = r.id AND a.palette_id IS NOT NULL AND a.range_le IS NOT NULL) AS quantite,
+              - (SELECT COUNT(*) FROM affectations_colis a WHERE a.reception_id = r.id AND a.palette_id IS NOT NULL AND a.range_le IS NOT NULL)
+              -- cosses reçues sur une palette (cartons ou séparées) : elles entrent au stock au rangement de leur palette,
+              -- sans plan (les cosses séparées hors palette de la même ligne gardent leur place)
+              - (SELECT COUNT(*) FROM controles_mobile c WHERE c.reception_id = r.id AND (c.carton_id IS NOT NULL OR c.palette_cosses_id IS NOT NULL)
+                   AND c.controle = 'reception' AND c.resultat IN ('conforme', 'ecart_quantite'))
+              -- colis posés pendant la réception pour une sortie urgente : déjà au stock (ou déjà sortis)
+              - (SELECT COUNT(*) FROM sorties_urgentes u WHERE u.reception_id = r.id AND u.date_posee IS NOT NULL) AS quantite,
             r.longueur, r.largeur, r.hauteur, r.poids
      FROM receptions r
      LEFT JOIN reclamations rc ON rc.reception_id = r.id
@@ -651,7 +1047,8 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
   const secours = !automatique && estGestionnaire(utilisateur) && corps.force === true;
   if (!automatique && imp.reception !== 'terminee' && !secours) {
     const av = (await RI.avancement(connexion, [imp.id])).get(imp.id);
-    throw erreur(409, `En attente de la réception mobile (${av.recus}/${av.attendus} produit(s) reçu(s)). Le magasinier doit scanner les colis puis « Terminer la réception ».`,
+    const recus = av.resume ? `${av.recus}/${av.attendus} pièces reçues` : `${av.recus}/${av.attendus} produit(s) reçu(s)`;
+    throw erreur(409, `En attente de la réception mobile (${recus}). Le magasinier doit scanner les colis puis « Terminer la réception ».`,
       { code: 'reception_requise', recus: av.recus, attendus: av.attendus });
   }
   if (secours) {
@@ -664,7 +1061,7 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
   const produits = await produitsImport(connexion, imp.id);
   // Stock en place et places déjà réservées par les imports en cours de rangement, verrouillés
   const enPlace = (await occupation(connexion, true)).filter((l) => l.emplacement);
-  const { capaciteTampon: capacite, limites } = await parametresRangement(connexion);
+  const { capaciteTampon: capacite } = await parametresRangement(connexion);
   // Seuls l'administrateur et le chef de magasin peuvent modifier le plan ;
   // pour un magasinier (et l'ajout automatique), le plan du système s'applique
   const envoyes = !automatique && estGestionnaire(utilisateur) && Array.isArray(corps.placements) ? corps.placements : null;
@@ -674,15 +1071,15 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
         emplacement: String(p.emplacement || '').trim().toUpperCase() || null,
         quantite: Number(p.quantite),
       }))
-    : R.proposerPlan(produits, enPlace, { capaciteTampon: capacite, limites });
-  const refus = R.verifierPlan(plan, produits, enPlace, capacite, limites);
+    : R.proposerPlan(produits, enPlace, { capaciteTampon: capacite });
+  const refus = R.verifierPlan(plan, produits, enPlace, capacite);
   if (refus) throw erreur(409, refus);
 
   // Plan modifié par l'administrateur ou le chef : les emplacements différents de la proposition
   // du système sont enregistrés dans l'historique, avec un motif obligatoire.
   const ecarts = [];
   if (envoyes) {
-    const propose = R.proposerPlan(produits, enPlace, { capaciteTampon: capacite, limites });
+    const propose = R.proposerPlan(produits, enPlace, { capaciteTampon: capacite });
     const repartition = (liste, id) => {
       const m = new Map();
       for (const p of liste.filter((x) => x.id === id)) m.set(p.emplacement, (m.get(p.emplacement) ?? 0) + p.quantite);
@@ -721,6 +1118,8 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
       );
     }
   }
+  // Cartons de connecteurs ajoutés à une palette du magasin (descendue puis remise) : au stock, à sa place
+  await P.entrerComplements(connexion, imp.id, utilisateur.id);
   // Chaque colis reçu reçoit son emplacement imposé (colis triés par numéro, places dans l'ordre du plan)
   if (!secours) {
     for (const produit of produits) await attribuerColis(connexion, produit.id);
@@ -734,6 +1133,8 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
     [utilisateur.id, motifForce ? 1 : 0, motifForce, imp.id]
   );
   await connexion.query('UPDATE receptions SET date_reception = NOW() WHERE import_id = ?', [imp.id]);
+  // Sorties urgentes dont le colis n'est pas encore posé : plus possibles, le colis a maintenant son emplacement imposé
+  await connexion.query("UPDATE sorties_urgentes SET statut = 'annulee' WHERE import_id = ? AND statut = 'a_poser'", [imp.id]);
   return {
     id: imp.id,
     secours: !!secours,
@@ -747,12 +1148,14 @@ async function ajouterAuStock(connexion, importId, utilisateur, corps = {}, { au
 // réception mobile terminée sans écart, il passe au stock (plan du système). Renvoie les imports ajoutés.
 async function ajoutsAutomatiques(connexion) {
   const ajoutes = [];
+  const separee = (await modeReception(connexion)) === 'separee';
   for (let garde = 0; garde < 50; garde++) {
     const [[premier]] = await connexion.query(
       `SELECT i.id, i.reception, i.reception_ecarts, i.reception_par FROM imports i
        WHERE i.statut = 'en_attente' ORDER BY ${ARRIVEE}, i.id LIMIT 1`
     );
-    if (!premier || premier.reception !== 'terminee' || premier.reception_ecarts > 0) break;
+    // réception séparée : les écarts sont déjà réclamés, l'import passe au stock sans validation du chef
+    if (!premier || premier.reception !== 'terminee' || (premier.reception_ecarts > 0 && !separee)) break;
     try {
       await ajouterAuStock(connexion, premier.id, { id: premier.reception_par, role: 'magasinier' }, {}, { automatique: true });
       ajoutes.push(premier.id);

@@ -1,11 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db');
+const { ROLES } = require('../middleware/auth');
 
 const router = express.Router();
 
-const ROLES = ['admin', 'chef_magasin', 'magasinier', 'planificateur'];
-const COLONNES = 'id, matricule, nom, prenom, role, actif, derniere_connexion, created_at';
+const S = require('../session-mobile');
+const COLONNES = `id, matricule, nom, prenom, role, actif, derniere_connexion, created_at, ${S.SQL_EN_LIGNE()} AS en_ligne_mobile, session_mobile_vu`;
 
 function valider({ matricule, nom, prenom, role }, motDePasse, creation) {
   if (!matricule?.trim() || !nom?.trim() || !prenom?.trim()) {
@@ -85,6 +86,14 @@ router.put('/:id', async (req, res, next) => {
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Ce matricule existe déjà' });
     next(err);
   }
+});
+
+// POST /api/utilisateurs/:id/liberer-mobile : téléphone perdu ou déchargé, le compte peut se reconnecter tout de suite
+router.post('/:id/liberer-mobile', async (req, res, next) => {
+  try {
+    if (!(await S.liberer(Number(req.params.id)))) return res.status(404).json({ message: 'Utilisateur introuvable' });
+    res.json({ message: 'Session mobile libérée : le compte peut se connecter sur un autre téléphone.' });
+  } catch (err) { next(err); }
 });
 
 // DELETE /api/utilisateurs/:id

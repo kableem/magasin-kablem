@@ -17,6 +17,11 @@ export class ExportService {
     );
   }
 
+  // Références en stock qui contiennent le texte tapé (saisie au clavier), avec la quantité disponible
+  references(q: string): Promise<{ reference: string; type: string; disponible: number }[]> {
+    return firstValueFrom(this.http.get<{ reference: string; type: string; disponible: number }[]>(api('/mobile/export/references'), { params: { q } }));
+  }
+
   enCours(): Promise<PreparationExport | null> {
     return firstValueFrom(this.http.get<PreparationExport | null>(api('/mobile/export/en-cours')));
   }

@@ -6,6 +6,7 @@
 // Filtres : du, au (AAAA-MM-JJ), utilisateur (id), reference, controle (reception | rangement | export | ranger),
 //           resultat, niveau (alertes | tout), manuel (1 = saisies manuelles seulement)
 const express = require('express');
+const { nomEmplacement, avecNumeros } = require('../plan');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const db = require('../db');
@@ -15,7 +16,7 @@ const { COULEURS, TITRES, ALERTES } = outils;
 const router = express.Router();
 
 const CONTROLES = { reception: 'Réception', rangement: 'Rangement', export: 'Export', ranger: 'Ranger le magasin' };
-const ROLES = { admin: 'Administrateur', chef_magasin: 'Chef de magasin', magasinier: 'Magasinier', planificateur: 'Planificateur' };
+const ROLES = { admin: 'Administrateur', chef_magasin: 'Chef de magasin', magasinier: 'Magasinier' };
 const COULEUR_PDF = { vert: '#138a4b', orange: '#d97a00', rouge: '#d42020' };
 
 function filtres(q) {
@@ -203,7 +204,7 @@ router.get('/excel', async (req, res, next) => {
     for (const l of lignes) {
       const ligne = feuille.addRow({
         date: dateFr(l.date), controle: l.controle_libelle, resultat: l.titre, reference: l.reference ?? '', lot: l.lot ?? '',
-        colis: l.colis ?? '', scanne: l.emplacement_scanne ?? '', prevu: l.emplacement_prevu ?? '',
+        colis: l.colis ?? '', scanne: l.emplacement_scanne ? nomEmplacement(l.emplacement_scanne) : '', prevu: l.emplacement_prevu ? avecNumeros(l.emplacement_prevu) : '',
         ecart: l.ecart ?? '', lieu: lieu(l), saisie: l.saisie_manuelle ? 'Manuelle' : 'Scan', matricule: l.matricule ?? '',
         par: l.par ?? '', message: l.message,
       });

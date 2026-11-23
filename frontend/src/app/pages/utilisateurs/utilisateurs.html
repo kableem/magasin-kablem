@@ -14,7 +14,6 @@
   <div class="stat stat-rouge"><span>Administrateurs</span><strong>{{ stats().admins }}</strong></div>
   <div class="stat stat-orange"><span>Chefs de magasin</span><strong>{{ stats().chefs }}</strong></div>
   <div class="stat stat-bleu"><span>Magasiniers</span><strong>{{ stats().magasiniers }}</strong></div>
-  <div class="stat stat-violet"><span>Planificateurs</span><strong>{{ stats().planificateurs }}</strong></div>
   <div class="stat stat-gris"><span>Inactifs</span><strong>{{ stats().inactifs }}</strong></div>
 </div>
 
@@ -83,6 +82,10 @@
             </td>
             <td class="date">
               {{ u.derniere_connexion ? (u.derniere_connexion | date: 'dd/MM/yyyy HH:mm') : 'Jamais' }}
+              @if (u.en_ligne_mobile) {
+                <span class="en-ligne" title="Connecté sur un téléphone : une 2e connexion mobile est refusée jusqu’à « Se déconnecter » ou « Libérer »"><i></i>Connecté sur mobile</span>
+                <button type="button" class="liberer" (click)="libererMobile(u)" title="Téléphone perdu ou déchargé : permettre la connexion sur un autre téléphone">Libérer</button>
+              }
             </td>
             <td class="actions">
               <button type="button" class="icone-btn" title="Modifier" (click)="ouvrirModification(u)">

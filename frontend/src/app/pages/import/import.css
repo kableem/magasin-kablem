@@ -444,3 +444,89 @@ li[data-type='en_trop'] .type-ecart, li[data-type='hors_import'] .type-ecart { c
 .empl-actuel { display: inline-block; padding: 1px 10px; font-family: Consolas, monospace; font-weight: 800; color: #111; background: #ffe14a; border-left: 4px solid #111; border-radius: 4px; }
 .boutons-synchro { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
+
+/* Les deux étapes : réception puis rangement */
+.deux-etapes { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin-bottom: 16px; }
+.etape-processus { flex: 1 1 260px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f4f6fb; border: 1px solid var(--bord); border-radius: 12px; }
+.etape-processus .num { flex: none; display: grid; place-items: center; width: 30px; height: 30px; font-weight: 800; color: #fff; background: #8a93a8; border-radius: 50%; }
+.etape-processus strong { display: block; font-size: 14.5px; color: var(--nuit); }
+.etape-processus small { font-size: 12.5px; color: var(--gris); }
+.etape-processus[data-etat='en_cours'] { background: #eaf2ff; border-color: #9cc0f5; }
+.etape-processus[data-etat='en_cours'] .num { background: #1f6fd1; }
+.etape-processus[data-etat='ecarts'] { background: #fff4e5; border-color: #f0c58a; }
+.etape-processus[data-etat='ecarts'] .num { background: #b86a00; }
+.etape-processus[data-etat='fait'] { background: #e8f6ee; border-color: #9fd8b6; }
+.etape-processus[data-etat='fait'] .num { background: #1d8a52; }
+.etape-processus[data-etat='bloque'] { opacity: 0.7; }
+.fleche-etapes { align-self: center; width: 22px; fill: #8a93a8; }
+
+/* Import par référence (référence + total de pièces) : bilan par référence */
+.explication-resume { margin: 0 0 10px; font-size: 13.5px; color: var(--gris); }
+.table-references td { vertical-align: middle; }
+.table-references .colis-ref { display: block; font-size: 11.5px; color: var(--gris); }
+.table-references .lots-ref { display: flex; flex-wrap: wrap; gap: 4px 10px; max-width: 320px; font-size: 12.5px; }
+.table-references .lots-ref small { color: var(--gris); }
+.table-references tr[data-statut="manquant"] .ecart-ref, .table-references tr[data-statut="non_recue"] .ecart-ref { color: #b81818; font-weight: 700; }
+.table-references tr[data-statut="en_trop"] .ecart-ref { color: #b86a00; font-weight: 700; }
+.bilan-ref { display: inline-block; padding: 3px 10px; font-size: 12px; font-weight: 700; border-radius: 999px; white-space: nowrap; color: var(--gris); background: #eef1f6; }
+.bilan-ref[data-statut="conforme"] { color: #0f7a43; background: #e3f5ea; }
+.bilan-ref[data-statut="tolere"] { color: #0f6a7a; background: #e2f4f7; }
+.bilan-ref[data-statut="manquant"] { color: #b81818; background: #fde8e8; }
+.bilan-ref[data-statut="en_trop"] { color: #9a5205; background: #fff2e0; }
+.titre-lots { margin: 18px 0 8px; font-size: 14.5px; color: var(--nuit); }
+/* Cartons de cosses */
+.cartons-import { margin-bottom: 16px; }
+.entete-cartons { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.entete-cartons .petit { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; }
+.entete-cartons svg { width: 17px; fill: currentColor; }
+.palette-cosses { margin-top: 10px; border: 1px solid #dfe3ec; border-left: 5px solid #b9c2d6; border-radius: 12px; background: #fff; overflow: hidden; }
+.palette-cosses[data-statut='ouverte'] { border-left-color: #e08a00; }
+.palette-cosses[data-statut='terminee'] { border-left-color: #2f6fd6; }
+.palette-cosses[data-statut='rangee'] { border-left-color: #1d8a52; }
+.palette-tete { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; background: #f7f8fc; }
+.palette-icone { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: #06163a; }
+.palette-icone svg { width: 20px; fill: #fff; }
+.palette-titre { flex: 1; min-width: 180px; display: flex; flex-direction: column; }
+.palette-titre strong { font-size: 15px; color: #06163a; }
+.palette-titre small { font-size: 12.5px; color: #5b6475; }
+.palette-reste { font-size: 12.5px; font-weight: 700; color: #5b6475; }
+.palette-cosses .table-defilante { margin: 0; border: 0; border-radius: 0; }
+.palette-separees { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 10px; border-top: 1px dashed #dfe3ec; font-size: 12.5px; }
+.etiquette-separees { font-weight: 700; color: #5b6475; margin-right: 4px; }
+.puce-separee { padding: 3px 10px; background: #fff2e0; color: #7a4204; border-radius: 999px; }
+.aide-impression { margin: 4px 0 8px; font-size: 12px; color: #5b6475; }
+.table-cartons .colis-ref { display: block; font-size: 11.5px; color: var(--gris); }
+.hors-import-attente { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 16px; padding: 10px 14px; font-size: 13.5px; color: #6b4a00; background: #fff4e5; border-left: 4px solid #b86a00; border-radius: 10px; }
+.hors-import-attente .petit { padding: 6px 12px; }
+.urgences-import { margin-bottom: 16px; padding: 4px 14px 10px; background: #fff6f5; border-left: 4px solid #d42020; border-radius: 10px; }
+.destination-urgence { display: inline-block; padding: 1px 9px; font-weight: 800; color: #fff; background: #d42020; border-radius: 999px; }
+.etat-urgence { display: inline-block; padding: 2px 10px; font-size: 12px; font-weight: 700; border-radius: 999px; white-space: nowrap; }
+.etat-urgence.sortie { color: #137a3e; background: #e2f6ea; }
+.etat-urgence.attente { color: #8a5a00; background: #fff1d6; }
+.etat-urgence.annulee { color: #5b6478; background: #eef1f6; }
+
+/* Suppression d'un import (administrateur) */
+.zone-suppression { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--bord); }
+.supprimer-import { display: inline-flex; align-items: center; gap: 6px; color: #b81818; }
+.supprimer-import svg { width: 17px; fill: currentColor; }
+.zone-suppression { gap: 22px; }
+.supprimer-import.complet { font-weight: 700; color: #8f0d0d; }
+.modale-suppression { width: min(600px, 96vw); max-height: 92vh; overflow-y: auto; }
+.avertissement-suppression { margin: 0 0 14px; padding: 12px 14px; font-size: 14px; color: #6b1010; background: #fde8e8; border-left: 4px solid #d7262e; border-radius: 10px; }
+.avertissement-suppression ul { margin: 6px 0 8px; padding-left: 20px; }
+.avertissement-suppression small { display: block; color: #7a3a3a; }
+.champ-suppression { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13.5px; font-weight: 600; color: var(--gris); }
+.champ-suppression input { height: 40px; }
+
+
+/* Bouton PDF du pointage, sur la ligne de chaque import */
+.ligne-entete { display: flex; align-items: center; }
+.ligne-entete .import-entete { flex: 1; min-width: 0; }
+.btn-pdf-import {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; padding: 7px 12px;
+  font: inherit; font-size: 13px; font-weight: 700; color: #b81818; background: #fff;
+  border: 1.5px solid #f3c0c0; border-radius: 10px; cursor: pointer;
+}
+.btn-pdf-import svg { width: 16px; height: 16px; fill: currentColor; }
+.btn-pdf-import:hover:not(:disabled) { background: #fdecec; border-color: #e88; }
+.btn-pdf-import:disabled { opacity: 0.4; cursor: not-allowed; }

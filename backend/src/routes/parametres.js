@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const R = require('../rangement');
-const { capaciteTampon, limitesConnecteurs, delaiReclamation } = require('../parametres');
+const { capaciteTampon, delaiReclamation, modeReception, MODES_RECEPTION } = require('../parametres');
 const { lignesEnStock, placesReservees } = require('./stock');
 const { pdfEtiquettesTampon } = require('../etiquettes');
 const { exigerGestionnaire } = require('../middleware/auth');
@@ -14,8 +14,8 @@ router.get('/', async (req, res, next) => {
     res.json({
       tampon_capacite: await capaciteTampon(),
       tampon_max: R.TAMPON_MAX,
-      connecteurs: await limitesConnecteurs(),
       reclamation_delai_jours: await delaiReclamation(),
+      reception_mode: await modeReception(),
     });
   } catch (err) { next(err); }
 });
@@ -64,59 +64,6 @@ router.get('/tampon/etiquettes', exigerGestionnaire(), async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
-// Bornes acceptées pour chaque limite des palettes de connecteurs
-const BORNES = {
-  longueur: [20, 300, 'Longueur de la palette (cm)'],
-  largeur: [20, 300, 'Largeur de la palette (cm)'],
-  hauteur_n3: [10, 400, 'Hauteur utile du niveau 3 (cm)'],
-  hauteur_n4: [10, 400, 'Hauteur utile du niveau 4 (cm)'],
-  taux: [10, 100, 'Volume utilisable (%)'],
-  poids_max: [1, 2000, 'Poids maximal par palette (kg)'],
-};
-
-// PUT /api/parametres/connecteurs  { longueur, largeur, hauteur_n3, hauteur_n4, taux, poids_max }
-// (administrateur, chef de magasin)
-// Refusé si une palette déjà rangée ne respecterait plus les nouvelles limites.
-router.put('/connecteurs', exigerGestionnaire(), async (req, res, next) => {
-  try {
-    const limites = {};
-    for (const [nom, [min, max, libelle]] of Object.entries(BORNES)) {
-      const n = Number(req.body?.[nom]);
-      if (!Number.isFinite(n) || n < min || n > max) {
-        return res.status(400).json({ message: `${libelle} : valeur entre ${min} et ${max}` });
-      }
-      limites[nom] = n;
-    }
-
-    // Les palettes de connecteurs déjà rangées doivent rester dans les nouvelles limites
-    const connecteurs = (await lignesEnStock()).filter((l) => l.type === 'connecteur' && l.emplacement);
-    const parPlace = new Map();
-    for (const l of connecteurs) parPlace.set(l.emplacement, [...(parPlace.get(l.emplacement) ?? []), l]);
-    const problemes = [];
-    for (const [code, cartons] of parPlace) {
-      const poses = [];
-      for (const c of R.deplier(cartons)) {
-        const refus = R.refusConnecteur(c, code, poses, limites);
-        if (refus) { problemes.push(refus); break; }
-        poses.push(c);
-      }
-    }
-    if (problemes.length) {
-      return res.status(409).json({
-        message: `Impossible d'appliquer ces limites : ${problemes.slice(0, 3).join(' ; ')}${problemes.length > 3 ? ` (et ${problemes.length - 3} autre(s))` : ''}`,
-      });
-    }
-
-    for (const [nom, valeur] of Object.entries(limites)) {
-      await db.query(
-        'INSERT INTO parametres (cle, valeur) VALUES (?, ?) ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)',
-        [`connecteur_${nom}`, String(valeur)]
-      );
-    }
-    res.json({ connecteurs: limites });
-  } catch (err) { next(err); }
-});
-
 // PUT /api/parametres/reclamations  { delai_jours } : délai avant qu'une réclamation non réglée soit
 // en retard (administrateur, chef de magasin)
 router.put('/reclamations', exigerGestionnaire(), async (req, res, next) => {
@@ -130,6 +77,62 @@ router.put('/reclamations', exigerGestionnaire(), async (req, res, next) => {
       [String(delai)]
     );
     res.json({ reclamation_delai_jours: delai });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/parametres/reception  { mode } (administrateur, chef de magasin)
+//   mode : 'separee' (réception puis rangement, séparés) ou 'palette' (rangement pendant la réception)
+router.put('/reception', exigerGestionnaire(), async (req, res, next) => {
+  try {
+    if (!MODES_RECEPTION.includes(req.body?.mode)) return res.status(400).json({ message: 'Mode de réception : separee ou palette' });
+    await db.query(
+      "INSERT INTO parametres (cle, valeur) VALUES ('reception_mode', ?) ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)",
+      [req.body.mode]
+    );
+    res.json({ reception_mode: req.body.mode });
+  } catch (err) { next(err); }
+});
+
+// ---------- Mails d'alerte au service logistique (administrateur) ----------
+// Une sortie urgente pas terminée depuis plus de N minutes (2 h par défaut) : un seul mail aux adresses réglées ici.
+const M = require('../mails');
+const exigerAdmin = (req, res, next) => (req.utilisateur?.role === 'admin' ? next() : res.status(403).json({ message: "Réservé à l'administrateur" }));
+
+// GET /api/parametres/mails
+router.get('/mails', exigerAdmin, async (req, res, next) => {
+  try {
+    const r = await M.reglages();
+    res.json({ ...r, compte: M.nomCompte() });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/parametres/mails  { destinataires: "a@x.tn, b@x.tn", minutes: 120 }
+router.put('/mails', exigerAdmin, async (req, res, next) => {
+  try {
+    const { adresses, erreur } = M.lireAdresses(req.body?.destinataires);
+    if (erreur) return res.status(400).json({ message: erreur });
+    const minutes = Number(req.body?.minutes ?? M.MINUTES_DEFAUT);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) return res.status(400).json({ message: 'La durée doit être entre 1 et 1440 minutes' });
+    await db.query(
+      "INSERT INTO parametres (cle, valeur) VALUES ('mail_logistique', ?), ('mail_urgence_minutes', ?) ON DUPLICATE KEY UPDATE valeur = VALUES(valeur)",
+      [adresses.join(', '), String(minutes)]
+    );
+    res.json({ destinataires: adresses, minutes });
+  } catch (err) { next(err); }
+});
+
+// POST /api/parametres/mails/essai : mail d'essai aux adresses enregistrées
+router.post('/mails/essai', exigerAdmin, async (req, res, next) => {
+  try {
+    const { destinataires } = await M.reglages();
+    if (!destinataires.length) return res.status(400).json({ message: "Enregistrez d'abord au moins une adresse du service logistique" });
+    try {
+      await M.envoyerEssai(destinataires);
+    } catch (err) {
+      if (err.status) throw err;
+      return res.status(502).json({ message: `Mail non envoyé : ${err.message}` });
+    }
+    res.json({ message: `Mail d'essai envoyé à ${destinataires.join(', ')}` });
   } catch (err) { next(err); }
 });
 

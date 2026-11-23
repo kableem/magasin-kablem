@@ -6,9 +6,9 @@ export const routes: Routes = [
   { path: 'menu', canActivate: [connecteGuard], loadComponent: () => import('./pages/menu/menu.page').then((m) => m.MenuPage) },
   { path: 'import', canActivate: [connecteGuard], loadComponent: () => import('./pages/import/import.page').then((m) => m.ImportPage) },
   { path: 'export', canActivate: [connecteGuard], loadComponent: () => import('./pages/export/export.page').then((m) => m.ExportPage) },
+  { path: 'urgence', canActivate: [connecteGuard], loadComponent: () => import('./pages/urgence/urgence.page').then((m) => m.UrgencePage) },
   { path: 'reception', canActivate: [connecteGuard], loadComponent: () => import('./pages/reception/reception.page').then((m) => m.ReceptionPage) },
   { path: 'rangement', canActivate: [connecteGuard], loadComponent: () => import('./pages/rangement/rangement.page').then((m) => m.RangementPage) },
-  { path: 'inventaire', canActivate: [connecteGuard], loadComponent: () => import('./pages/inventaire/inventaire.page').then((m) => m.InventairePage) },
   { path: 'ranger', canActivate: [connecteGuard], loadComponent: () => import('./pages/ranger/ranger.page').then((m) => m.RangerPage) },
   { path: 'consulter', canActivate: [connecteGuard], loadComponent: () => import('./pages/consulter/consulter.page').then((m) => m.ConsulterPage) },
   // lien imprimé sur les étiquettes d'emplacement (ouvert par l'appareil photo du téléphone)

@@ -21,8 +21,12 @@ const CLES = {
   quantite: ['quantite', 'quantité', 'qte', 'qté', 'qta', 'qty', 'quantita', 'quantità', 'quantity'],
 };
 
-// Référence article : commence par une lettre et contient un chiffre (F0391, CFLR9YAT30035800002T)
-const REFERENCE = /^(?=.*\d)[A-Z][A-Z0-9]{2,39}$/i;
+// Référence article : commence par une lettre et contient un chiffre (F0391, CFLR9YAT30035800002T) ;
+// espaces, « / », « - » et « . » acceptés à l'intérieur (AK 15317766, YA/7116-4121-02)
+// virgule acceptée à l'intérieur : références de connecteurs (GCOR 4,5T3 A125 L.110 DELFINGEN)
+const REFERENCE = /^(?=.*\d)[A-Z][A-Z0-9]*(?:[ .,/-]+[A-Z0-9]+)*$/i;
+const LONGUEUR_REFERENCE = 50;
+const estReference = (r) => r.length >= 3 && r.length <= LONGUEUR_REFERENCE && REFERENCE.test(r);
 const normaliserCle = (k) => String(k).trim().toLowerCase();
 const champDe = (cle) => Object.keys(CLES).find((champ) => CLES[champ].includes(normaliserCle(cle)));
 
@@ -43,8 +47,8 @@ function complet(t) {
 function ticketColis(morceaux) {
   if (morceaux.length !== 5) return null;
   const [ref, confection, colis, lot, suffixe] = morceaux;
-  if (!REFERENCE.test(ref) || !/^\d{5,12}$/.test(lot) || !/^\d{1,6}$/.test(colis) || !/^\d{1,4}$/.test(suffixe)) return null;
-  const reference = ref.toUpperCase();
+  if (!estReference(ref) || !/^\d{5,12}$/.test(lot) || !/^\d{1,6}$/.test(colis) || !/^\d{1,4}$/.test(suffixe)) return null;
+  const reference = ref.toUpperCase().replace(/\s+/g, ' ');
   return {
     reference,
     lot,
@@ -76,6 +80,13 @@ function lireTicket(texte) {
     }
   }
 
+  // Ticket du fournisseur : découpé aux points-virgules d'abord (la référence peut contenir une virgule)
+  const parPointVirgule = brut.split(';').map((m) => m.trim());
+  if (parPointVirgule.length === 5) {
+    const t = ticketColis(parPointVirgule);
+    if (t) return t;
+  }
+
   const morceaux = brut.split(/[;|\n\r\t]+|,(?!\d{1,2}\b)/).map((m) => m.trim()).filter(Boolean);
 
   const colis = ticketColis(morceaux);
@@ -98,7 +109,7 @@ function lireTicket(texte) {
 }
 
 // QR « Codice Articolo » du ticket : la référence seule (ex. « F0391 »)
-const estQrArticle = (texte) => REFERENCE.test(String(texte ?? '').trim());
+const estQrArticle = (texte) => estReference(String(texte ?? '').trim());
 
 // Lots de la base qui correspondent au ticket : « 202613167 » ou « 202613167-1 »
 function lotsDuTicket(ticket) {
@@ -134,7 +145,7 @@ function messageIllisible(texte) {
     return `Vous avez scanné le QR « Codice Articolo » (${String(texte).trim().toUpperCase()}). Scannez le QR du bas du ticket, celui avec le lot.`;
   }
   if (lireEmplacement(texte)) return "C'est l'étiquette d'un emplacement : scannez le ticket vert du produit.";
-  return 'Ce QR n\'est pas un ticket vert lisible (référence, lot, colis). Rescannez le QR du bas du ticket ou saisissez-le à la main.';
+  return 'Ce QR n\'est pas un ticket vert lisible (référence, lot, colis). Rescannez le QR du bas du ticket vert.';
 }
 
 module.exports = { lireTicket, lireEmplacement, lireQuantite, estQrArticle, lotsDuTicket, memeLot, messageIllisible };

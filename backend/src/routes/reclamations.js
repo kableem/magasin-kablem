@@ -72,9 +72,9 @@ async function chargerReclamations(filtres = {}) {
     `SELECT i.id AS import_id, i.statut AS statut_import, i.numero_livraison,
             DATE_FORMAT(i.date_creation, '%Y-%m-%dT%H:%i:%s') AS date_import,
             DATE_FORMAT(i.date_ajout_stock, '%Y-%m-%dT%H:%i:%s') AS date_ajout_stock,
-            rc.id, r.id AS reception_id, r.type, r.taille_bobine,
-            COALESCE(r.reference, rc.reference) AS reference, COALESCE(r.lot, rc.lot) AS lot,
-            COALESCE(r.quantite, 0) AS quantite_annoncee, rc.quantite, rc.motif, rc.commentaire, rc.origine,
+            rc.id, r.id AS reception_id, COALESCE(r.type, ia.type) AS type, COALESCE(r.taille_bobine, ia.taille_bobine) AS taille_bobine,
+            COALESCE(r.reference, rc.reference) AS reference, COALESCE(r.lot, rc.lot, IF(rc.unite = 'pieces', 'tous lots', NULL)) AS lot,
+            COALESCE(r.quantite, ia.pieces, 0) AS quantite_annoncee, rc.quantite, rc.unite, rc.motif, rc.commentaire, rc.origine,
             DATE_FORMAT(rc.date_creation, '%Y-%m-%dT%H:%i:%s') AS date_reclamation,
             u.matricule AS par,
             rc.statut, rc.solution, rc.note_suivi,
@@ -85,6 +85,8 @@ async function chargerReclamations(filtres = {}) {
             DATEDIFF(CURDATE(), DATE(rc.date_creation)) AS age_jours
      FROM reclamations rc
      LEFT JOIN receptions r ON r.id = rc.reception_id
+     -- import résumé : écart de pièces d'une référence (total annoncé par l'Italie)
+     LEFT JOIN imports_attendus ia ON rc.unite = 'pieces' AND ia.import_id = rc.import_id AND ia.reference = rc.reference
      JOIN imports i ON i.id = COALESCE(r.import_id, rc.import_id)
      LEFT JOIN utilisateurs u ON u.id = rc.utilisateur_id
      LEFT JOIN utilisateurs s ON s.id = rc.suivi_par
@@ -110,6 +112,9 @@ async function chargerReclamations(filtres = {}) {
   }
   return [...imports.values()];
 }
+
+// Import résumé : les quantités sont des pièces (« 4500 pièces »)
+const avecUnite = (p, n) => (p.unite === 'pieces' ? `${n} pièces` : n);
 
 function nomFichier(extension) {
   const d = new Date();
@@ -192,6 +197,7 @@ router.get('/excel', async (req, res, next) => {
       { header: 'Lot', key: 'lot', width: 14 },
       { header: 'Qté annoncée', key: 'annoncee', width: 13 },
       { header: 'Qté réclamée', key: 'reclamee', width: 13 },
+      { header: 'Unité', key: 'unite', width: 9 },
       { header: 'Motif', key: 'motif', width: 30 },
       { header: 'Commentaire', key: 'commentaire', width: 45 },
       { header: 'Réclamé par', key: 'par', width: 22 },
@@ -214,6 +220,7 @@ router.get('/excel', async (req, res, next) => {
           lot: p.lot,
           annoncee: p.quantite_annoncee,
           reclamee: p.quantite,
+          unite: p.unite === 'pieces' ? 'pièces' : 'colis',
           motif: MOTIFS[p.motif],
           commentaire: p.commentaire || '',
           par: p.par || '',
@@ -336,7 +343,7 @@ function dessinerPdf(doc, imports, filtresDemandes) {
       ligneTableau(cols.map(([t]) => t.toUpperCase()), { gras: true, taille: 7.5, fond: '#eef1f7', couleur: GRIS });
       for (const p of i.produits) {
         ligneTableau([
-          libelleProduit(p), p.reference, p.lot, p.quantite_annoncee, p.quantite,
+          libelleProduit(p), p.reference, p.lot, avecUnite(p, p.quantite_annoncee), avecUnite(p, p.quantite),
           MOTIFS[p.motif], p.commentaire || '-',
           STATUTS[p.statut] + (p.solution ? ` (${SOLUTIONS[p.solution]})` : '') + (p.en_retard ? ` - en retard (${p.age_jours} j)` : ''),
           p.par || '',
@@ -376,8 +383,8 @@ function contenuMail(i, expediteur) {
         <td style="${cellule}">${echapper(libelleProduit(p))}</td>
         <td style="${cellule}font-weight:bold;">${echapper(p.reference)}</td>
         <td style="${cellule}">${echapper(p.lot)}</td>
-        <td style="${cellule}text-align:center;">${p.quantite_annoncee}</td>
-        <td style="${cellule}text-align:center;font-weight:bold;color:#c81e1e;">${p.quantite}</td>
+        <td style="${cellule}text-align:center;">${avecUnite(p, p.quantite_annoncee)}</td>
+        <td style="${cellule}text-align:center;font-weight:bold;color:#c81e1e;">${avecUnite(p, p.quantite)}</td>
         <td style="${cellule}">${echapper(MOTIFS[p.motif])}</td>
         <td style="${cellule}">${echapper(p.commentaire || '-')}</td>
       </tr>`).join('');

@@ -1,7 +1,6 @@
-import { EmplPipe } from './empl.pipe';
+import { EmplPipe, NumerosPipe } from './empl.pipe';
 import { Component, ElementRef, OnDestroy, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { IonButton, IonIcon, IonInput, IonSpinner } from '@ionic/angular/standalone';
+import { IonIcon, IonSpinner } from '@ionic/angular/standalone';
 import { BrowserQRCodeReader } from '@zxing/browser';
 import { DecodeHintType } from '@zxing/library';
 import { addIcons } from 'ionicons';
@@ -9,13 +8,13 @@ import { CameraService } from '../services/camera.service';
 import { ResultatControle, estCodeEmplacement, estQrArticle, ressembleTicket } from '../services/modeles';
 import { ResultatComponent } from './resultat.component';
 import {
-  cameraOutline, keypadOutline, flashlight, flashlightOutline, closeOutline, scanOutline, arrowDown, checkmark, alert, close,
-  chevronDown, chevronUp, arrowForward,
+  cameraOutline, refreshOutline, flashlight, flashlightOutline, closeOutline, scanOutline, arrowDown, checkmark, alert, close,
+  chevronDown, chevronUp, arrowForward, eyeOffOutline,
 } from 'ionicons/icons';
 
 export interface Lecture {
   texte: string;
-  manuel: boolean; // true = saisie manuelle de secours (marquée dans le journal)
+  manuel: boolean; // toujours false : tout se scanne à la caméra (champ gardé pour le journal)
 }
 
 // Règle générale du scan, pour tous les écrans : le scan passe avant tout.
@@ -59,18 +58,49 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
   return natifPartage;
 }
 
-// Scan d'un QR avec la caméra arrière du téléphone, ou saisie manuelle de secours.
+// Scan d'un QR avec la caméra arrière du téléphone (pas de saisie au clavier : tout se scanne).
 // actif = false : lecture suspendue (vérification en cours), la caméra reste ouverte.
 // cible : emplacement où aller, affiché en grand sur le viseur ; compteur : avancement (ex. « 3/6 »).
 // resultat : dernier résultat, affiché sous le viseur ; fixe = viseur collé en haut de l'écran.
 @Component({
   selector: 'app-scanner',
   standalone: true,
-  imports: [EmplPipe, FormsModule, IonButton, IonIcon, IonInput, IonSpinner, ResultatComponent],
+  imports: [EmplPipe, NumerosPipe, IonIcon, IonSpinner, ResultatComponent],
   host: { '[class.fixe]': 'fixe()' },
   template: `
-    @if (!manuel()) {
-      <div class="viseur" [attr.data-couleur]="frais() ? resultat()?.couleur : null" [class.suspendu]="!actif()">
+    @if (vue() === 'ferme') {
+      <!-- Scanner masqué : l'écran entier est libre pour lire les informations ; un toucher le rouvre -->
+      <div class="replie k-apparait">
+        <button type="button" class="replie-ouvrir" (click)="ouvrir('camera')" aria-label="Rouvrir le scanner">
+          <span class="replie-icone"><ion-icon name="scan-outline"></ion-icon></span>
+          <span class="replie-texte">
+            <b>{{ consigne() }}</b>
+            <small>Scanner masqué · touchez pour scanner</small>
+          </span>
+          @if (cible()) {
+            <span class="k-etiquette replie-cible">{{ cible() | empl }}</span>
+          }
+          @if (compteur()) {
+            <span class="compteur petit">{{ compteur() }}</span>
+          }
+        </button>
+      </div>
+    } @else {
+      <!-- Barre du scanner : l'état de la caméra (tout se scanne à la caméra), et Masquer pour voir tout l'écran -->
+      <div class="barre">
+        <div class="etat-camera" [attr.data-etat]="erreur() ? 'erreur' : demarrage() ? 'ouverture' : !actif() ? 'verif' : 'prete'" role="status">
+          <span class="voyant"></span>
+          <ion-icon name="camera-outline"></ion-icon>
+          <span class="etat-texte">{{ erreur() ? 'Caméra indisponible' : demarrage() ? 'Ouverture de la caméra…' : !actif() ? 'Vérification…' : 'Caméra prête : visez le QR' }}</span>
+        </div>
+        <button type="button" class="masquer" (click)="masquer()" aria-label="Masquer le scanner pour voir tout l'écran">
+          <ion-icon name="eye-off-outline"></ion-icon> Masquer
+        </button>
+      </div>
+    }
+
+    @if (vue() === 'camera') {
+      <div class="viseur"[attr.data-couleur]="frais() ? resultat()?.couleur : null" [class.suspendu]="!actif()">
         <video #video playsinline muted></video>
 
         @if (!erreur() && !demarrage()) {
@@ -88,6 +118,7 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
           <div class="info erreur">
             <span class="bulle"><ion-icon name="camera-outline"></ion-icon></span>
             <span>{{ e }}</span>
+            <button type="button" class="reessayer" (click)="reessayer()"><ion-icon name="refresh-outline"></ion-icon> Réessayer</button>
           </div>
         }
 
@@ -110,7 +141,6 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
             <span class="cible"><small>{{ cibleTexte() }}</small><span class="k-etiquette">{{ cible() | empl }}</span></span>
           }
           <span class="outils">
-            <button type="button" class="rond" (click)="ouvrirManuel()" aria-label="QR illisible : saisie manuelle"><ion-icon name="keypad-outline"></ion-icon></button>
             @if (torche() !== null) {
               <button type="button" class="rond" [class.allumee]="torche()" (click)="basculerTorche()" aria-label="Lampe">
                 <ion-icon [name]="torche() ? 'flashlight' : 'flashlight-outline'"></ion-icon>
@@ -119,19 +149,6 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
           </span>
         </div>
       </div>
-    } @else {
-      <form class="manuel k-apparait" (ngSubmit)="valider()">
-        <div class="manuel-tete">
-          <span><ion-icon name="keypad-outline"></ion-icon> Saisie manuelle</span>
-          <button type="button" (click)="manuel.set(false)" aria-label="Revenir à la caméra"><ion-icon name="close-outline"></ion-icon></button>
-        </div>
-        <label class="k-libelle">{{ libelleManuel() }}</label>
-        <div class="k-champ">
-          <ion-input [placeholder]="exempleManuel()" [(ngModel)]="saisie" name="saisie" autocapitalize="characters" class="mono"></ion-input>
-        </div>
-        <p class="note">Cette saisie est marquée « saisie manuelle » dans le journal.</p>
-        <ion-button type="submit" expand="block" class="k-btn-principal" [disabled]="!saisie.trim()">Valider</ion-button>
-      </form>
     }
 
     @if (resultat(); as r) {
@@ -142,10 +159,10 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
         <span class="icone"><ion-icon [name]="icone()"></ion-icon></span>
         <span class="texte">
           <b>{{ r.titre }}</b>
-          <small [class.entier]="detail()">{{ r.message }}</small>
+          <small [class.entier]="detail()">{{ r.message | numeros }}</small>
         </span>
         @if (codeResultat()) {
-          <span class="k-etiquette">{{ codeResultat() }}</span>
+          <span class="k-etiquette">{{ codeResultat() | empl }}</span>
         }
         <ion-icon class="ouvrir" [name]="detail() ? 'chevron-up' : 'chevron-down'"></ion-icon>
       </button>
@@ -157,7 +174,7 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
   styles: `
     :host { display: block; }
     :host(.fixe) { position: sticky; top: 0; z-index: 20; padding-bottom: 10px; background: var(--k-fond); box-shadow: 0 -16px 0 var(--k-fond); }
-    .viseur { position: relative; overflow: hidden; width: 100%; aspect-ratio: 4 / 3; max-height: 42vh; margin: 0 auto; background: radial-gradient(circle at 50% 40%, #13296b, #050d22 75%); border-radius: 24px; box-shadow: var(--k-ombre-forte), inset 0 0 0 0 transparent; transition: box-shadow 0.2s; }
+    .viseur { position: relative; overflow: hidden; width: 100%; aspect-ratio: 4 / 3; max-height: 38vh; margin: 0 auto; background: radial-gradient(circle at 50% 40%, #13296b, #050d22 75%); border-radius: 24px; box-shadow: var(--k-ombre-forte), inset 0 0 0 0 transparent; transition: box-shadow 0.2s; }
     .viseur[data-couleur='vert'] { box-shadow: 0 0 0 5px var(--k-vert), var(--k-ombre-forte); }
     .viseur[data-couleur='orange'] { box-shadow: 0 0 0 5px var(--k-orange), var(--k-ombre-forte); }
     .viseur[data-couleur='rouge'] { box-shadow: 0 0 0 5px var(--k-erreur), var(--k-ombre-forte); }
@@ -209,12 +226,35 @@ function detecteurNatif(): Promise<DetecteurNatif | null> {
     .eclair[data-couleur='rouge'] { background: var(--k-erreur); }
     @keyframes eclair { 0% { opacity: 0.5; } 100% { opacity: 0; } }
 
-    .manuel { padding: 16px; background: var(--k-surface); border: 2px dashed var(--k-bord); border-radius: 24px; }
-    .manuel-tete { display: flex; align-items: center; justify-content: space-between; font-weight: 700; color: var(--k-marine); }
-    .manuel-tete span { display: flex; align-items: center; gap: 8px; }
-    .manuel-tete button { display: grid; place-items: center; width: 44px; height: 44px; font-size: 24px; color: var(--k-gris); background: var(--k-surface-2); border: 0; border-radius: 50%; }
-    .manuel .k-libelle { margin-top: 12px; }
-    .note { margin: 8px 2px 14px; font-size: 13px; color: var(--k-gris); }
+    /* Barre du scanner : état de la caméra, et Masquer */
+    .barre { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .etat-camera { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 16px; font-size: 14.5px; font-weight: 700; color: var(--k-nuit); background: var(--k-surface); border: 1px solid var(--k-bord); border-radius: 999px; box-shadow: var(--k-ombre); }
+    .etat-camera ion-icon { flex: none; font-size: 19px; color: var(--k-marine); }
+    .etat-texte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .voyant { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--k-vert); box-shadow: 0 0 0 4px rgba(19, 138, 75, 0.18); animation: voyant 1.6s ease-in-out infinite; }
+    .etat-camera[data-etat='ouverture'] .voyant, .etat-camera[data-etat='verif'] .voyant { background: var(--k-orange); box-shadow: 0 0 0 4px rgba(217, 122, 0, 0.18); }
+    .etat-camera[data-etat='erreur'] { color: var(--k-erreur); }
+    .etat-camera[data-etat='erreur'] .voyant { background: var(--k-erreur); box-shadow: 0 0 0 4px rgba(212, 32, 32, 0.18); animation: none; }
+    @keyframes voyant { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+    .reessayer { display: inline-flex; align-items: center; gap: 6px; min-height: 48px; padding: 0 22px; font: inherit; font-size: 15px; font-weight: 800; color: var(--k-nuit); background: #fff; border: 0; border-radius: 999px; }
+    .reessayer ion-icon { font-size: 19px; }
+    .masquer { flex: none; display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 0 16px; font: inherit; font-size: 14.5px; font-weight: 700; color: var(--k-marine); background: var(--k-surface); border: 1px solid var(--k-bord); border-radius: 999px; box-shadow: var(--k-ombre); }
+    .masquer ion-icon { font-size: 19px; }
+
+    /* Scanner masqué : une seule barre, touchez pour rouvrir */
+    .replie { display: flex; align-items: stretch; gap: 8px; }
+    .replie-ouvrir { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; font: inherit; text-align: left; color: #fff; background: linear-gradient(135deg, #13296b, var(--k-nuit)); border: 0; border-radius: 18px; box-shadow: var(--k-ombre-forte); }
+    .replie-icone { flex: none; display: grid; place-items: center; width: 44px; height: 44px; font-size: 24px; color: #fff; background: var(--k-rouge); border-radius: 50%; animation: pouls 2s ease-in-out infinite; }
+    @keyframes pouls { 0%, 100% { box-shadow: 0 0 0 0 rgba(224, 34, 34, 0.55); } 50% { box-shadow: 0 0 0 7px rgba(224, 34, 34, 0); } }
+    .replie-texte { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .replie-texte b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+    .replie-texte small { font-size: 12.5px; color: #cfd6ee; }
+    .replie-cible { flex: none; font-size: 20px; padding: 2px 10px; }
+    .compteur.petit { font-size: 16px; padding: 2px 10px; }
+
+
+    /* Détail du résultat : il défile dans sa zone, sans cacher la page */
+    :host(.fixe) .detail { max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; border-radius: 16px; }
   `,
 })
 export class ScannerComponent implements OnDestroy {
@@ -223,8 +263,6 @@ export class ScannerComponent implements OnDestroy {
 
   readonly actif = input(true);
   readonly consigne = input('Visez le QR code');
-  readonly libelleManuel = input('Contenu du QR');
-  readonly exempleManuel = input('ex. F0391;13000;10;202613167;1');
   // Ce que l'on attend : un ticket produit, une étiquette d'emplacement, ou n'importe quel QR
   readonly attendu = input<'ticket' | 'emplacement' | 'tout'>('tout');
   readonly cible = input<string | null>(null);
@@ -256,14 +294,14 @@ export class ScannerComponent implements OnDestroy {
 
   readonly demarrage = signal(false);
   readonly erreur = signal<string | null>(null);
-  readonly manuel = signal(false);
+  // camera = viseur ouvert ; ferme = scanner masqué (caméra rendue), tout l'écran est libre
+  readonly vue = signal<'camera' | 'ferme'>('camera');
   readonly torche = signal<boolean | null>(null); // null = pas de lampe sur cet appareil
   readonly indice = signal<string | null>(null); // mauvais QR visé : on continue de scanner
   readonly attente = signal(false); // courte pause après un QR lu
   readonly frais = signal(false); // résultat qui vient d'arriver : viseur entouré de sa couleur
   readonly eclair = signal(false);
   readonly detail = signal(false);
-  saisie = '';
 
   readonly icone = computed(() => ({ vert: 'checkmark', orange: 'alert', rouge: 'close' })[this.resultat()?.couleur ?? 'vert']);
   // Emplacement à montrer dans la bande du résultat : rangé en, ou prévu (un seul)
@@ -278,10 +316,10 @@ export class ScannerComponent implements OnDestroy {
   });
 
   constructor() {
-    addIcons({ cameraOutline, keypadOutline, flashlight, flashlightOutline, closeOutline, scanOutline, arrowDown, checkmark, alert, close, chevronDown, chevronUp, arrowForward });
+    addIcons({ cameraOutline, refreshOutline, flashlight, flashlightOutline, closeOutline, scanOutline, arrowDown, checkmark, alert, close, chevronDown, chevronUp, arrowForward, eyeOffOutline });
     effect(() => {
-      const manuel = this.manuel();
-      untracked(() => (manuel ? this.debrancher() : void this.brancher()));
+      const camera = this.vue() === 'camera';
+      untracked(() => (camera ? void this.brancher() : this.debrancher()));
     });
     // Nouveau résultat : éclair plein écran et viseur entouré de sa couleur un instant
     effect(() => {
@@ -311,16 +349,21 @@ export class ScannerComponent implements OnDestroy {
     this.debrancher();
   }
 
-  ouvrirManuel(): void {
-    this.manuel.set(true);
+  ouvrir(v: 'camera'): void {
+    this.vue.set(v);
   }
 
-  valider(): void {
-    const texte = this.saisie.trim();
-    if (!texte) return;
-    this.saisie = '';
-    this.manuel.set(false);
-    this.lecture.emit({ texte, manuel: true });
+  // Caméra refusée ou en panne : nouvel essai (après avoir autorisé la caméra dans le navigateur)
+  reessayer(): void {
+    this.erreur.set(null);
+    this.debrancher();
+    void this.brancher();
+  }
+
+  // Masquer : la caméra est rendue et tout l'écran est libre ; le détail du dernier résultat s'ouvre pour le lire
+  masquer(): void {
+    this.vue.set('ferme');
+    if (this.resultat()) this.detail.set(true);
   }
 
   async basculerTorche(): Promise<void> {
@@ -337,7 +380,7 @@ export class ScannerComponent implements OnDestroy {
     if (this.branche) return;
     this.branche = true;
     if (!navigator.mediaDevices?.getUserMedia) {
-      this.erreur.set("Caméra indisponible : l'application doit être ouverte en HTTPS. Utilisez la saisie manuelle.");
+      this.erreur.set("Caméra indisponible : l'application doit être ouverte en HTTPS (adresse https://…). Appelez le chef.");
       this.branche = false;
       return;
     }
@@ -345,7 +388,7 @@ export class ScannerComponent implements OnDestroy {
     this.demarrage.set(true);
     try {
       this.flux = await this.camera.prendre();
-      if (this.detruit || this.manuel()) return;
+      if (this.detruit || this.vue() !== 'camera') return;
       await this.brancherVideo();
       this.natif ??= await detecteurNatif();
       // pas de lecture tout de suite : le QR de l'étape d'avant est peut-être encore devant la caméra
@@ -358,8 +401,8 @@ export class ScannerComponent implements OnDestroy {
       const nom = (e as Error)?.name;
       this.erreur.set(
         nom === 'NotAllowedError'
-          ? 'Accès à la caméra refusé : autorisez-le dans le navigateur, ou utilisez la saisie manuelle.'
-          : "Impossible d'ouvrir la caméra. Utilisez la saisie manuelle."
+          ? 'Accès à la caméra refusé : autorisez la caméra pour ce site dans le navigateur, puis touchez « Réessayer ».'
+          : "Impossible d'ouvrir la caméra : fermez les autres applications qui l'utilisent, puis touchez « Réessayer »."
       );
     } finally {
       this.demarrage.set(false);
@@ -371,7 +414,7 @@ export class ScannerComponent implements OnDestroy {
   private async brancherVideo(): Promise<void> {
     if (document.hidden) return;
     this.flux = await this.camera.ouvrir();
-    await new Promise((r) => setTimeout(r)); // la vidéo apparaît après le rendu (retour de la saisie manuelle)
+    await new Promise((r) => setTimeout(r)); // la vidéo apparaît après le rendu (scanner rouvert)
     const video = this.video()?.nativeElement;
     if (!video || this.detruit) return;
     if (video.srcObject !== this.flux) video.srcObject = this.flux;

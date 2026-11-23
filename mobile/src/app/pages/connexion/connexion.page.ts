@@ -80,7 +80,8 @@ export class ConnexionPage {
   motDePasse = '';
   readonly voir = signal(false);
   readonly enCours = signal(false);
-  readonly erreur = signal('');
+  // message de la déconnexion forcée (session fermée par le serveur), affiché à l'arrivée
+  readonly erreur = signal(this.auth.motif());
 
   constructor() {
     addIcons({ personOutline, lockClosedOutline, eyeOutline, eyeOffOutline, alertCircle, arrowForward });

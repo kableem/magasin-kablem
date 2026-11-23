@@ -1,6 +1,7 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { EmplPipe } from '../emplacements/empl.pipe';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FiltresJournal, LigneJournal, RESULTATS_ALERTE, ReceptionService, ResumeJournal } from '../../services/reception';
 import { ToastService } from '../../services/toast';
@@ -11,7 +12,7 @@ import { enregistrerFichier } from '../../services/telechargement';
 @Component({
   selector: 'app-journal',
   standalone: true,
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, EmplPipe],
   templateUrl: './journal.html',
   styleUrl: './journal.css',
 })

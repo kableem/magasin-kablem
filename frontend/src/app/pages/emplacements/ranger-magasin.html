@@ -109,7 +109,7 @@
                     <b class="mono">{{ r.reference ?? '—' }}</b>
                     @if (r.depuis || r.vers) {
                       <span class="trajet petit">
-                        <span class="etiq">{{ r.depuis ?? '?' }}</span>→<span class="etiq">{{ r.vers ?? '?' }}</span>
+                        <span class="etiq">{{ (r.depuis | empl) || '?' }}</span>→<span class="etiq">{{ (r.vers | empl) || '?' }}</span>
                       </span>
                     }
                     <span class="matricule">{{ r.matricule }}</span>
@@ -166,11 +166,11 @@
                   <td class="centre"><span class="qte">{{ m.quantite }}</span></td>
                   <td>
                     <span class="trajet">
-                      <span class="etiq" [class.libere]="m.depuis_liberee">{{ m.depuis }}</span>
+                      <span class="etiq" [class.libere]="m.depuis_liberee">{{ m.depuis | empl }}</span>
                       <svg viewBox="0 0 24 24" aria-label="vers"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>
-                      <span class="etiq arrivee">{{ m.vers }}</span>
+                      <span class="etiq arrivee">{{ m.vers | empl }}</span>
                       @if (m.depuis_liberee) {
-                        <span class="badge-libere">{{ m.depuis }} libéré</span>
+                        <span class="badge-libere">{{ m.depuis | empl }} libéré</span>
                       }
                     </span>
                   </td>

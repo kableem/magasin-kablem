@@ -103,7 +103,7 @@
         </div>
       }
 
-      <form (ngSubmit)="connexion()" novalidate>
+      <form #formulaire (ngSubmit)="connexion(formulaire)" novalidate>
         <label class="champ">
           <svg viewBox="0 0 24 24" class="icone">
             <path d="M20 7h-5V4c0-1.1-.9-2-2-2h-2c-1.1 0-2 .9-2 2v3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zM11 4h2v5h-2V4zM9 18H5v-1.5c0-1 2-1.5 2-1.5s2 .5 2 1.5V18zm-2-4c-.83 0-1.5-.67-1.5-1.5S6.17 11 7 11s1.5.67 1.5 1.5S7.83 14 7 14zm12 3h-7v-1.5h7V17zm0-3h-7v-1.5h7V14z" />

@@ -88,7 +88,7 @@ router.post('/emplacements/:code', async (req, res, next) => {
     const catalogue = await typesDuCatalogue(connexion, tickets.map((t) => t.reference));
     const inconnues = [...new Set(tickets.filter((t) => !catalogue.has(t.reference)).map((t) => t.reference))];
     if (inconnues.length) {
-      throw refus(400, `Référence(s) absente(s) du catalogue Articles : ${inconnues.join(', ')}. Ajoutez-les dans Administration → Articles.`);
+      throw refus(400, `Référence(s) absente(s) du catalogue Articles : ${inconnues.join(', ')}. Ajoutez-les dans la page Articles.`);
     }
     const typePlace = R.typeEmplacement(code);
     const mauvaisNiveau = tickets.find((t) => typePlace && catalogue.get(t.reference).type !== typePlace);

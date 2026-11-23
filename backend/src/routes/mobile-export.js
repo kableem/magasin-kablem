@@ -13,6 +13,7 @@
 // de la même référence. Le produit scanné remplace autant de produits du parcours FIFO (les plus récents
 // d'abord) ; la prise et la sortie sont marquées « hors FIFO ». Les autres rôles gardent le FIFO imposé.
 const express = require('express');
+const { piecesParLigne, piecesDe } = require('../pieces');
 const db = require('../db');
 const R = require('../rangement');
 const { lignesEnStock } = require('./stock');
@@ -23,6 +24,7 @@ const { lireTicket, lireEmplacement, memeLot, messageIllisible } = require('../t
 const { verrouillerStock, libererStock } = require('../verrou-stock');
 const { outils } = require('./mobile');
 const { expirerPreparations, retirerReserves } = require('../reservations');
+const D = require('../descentes');
 
 const { enregistrer, operation, UUID } = outils;
 const router = express.Router();
@@ -32,7 +34,8 @@ const code = (e) => e ?? 'non rangé';
 const estAdmin = (utilisateur) => utilisateur?.role === 'admin';
 
 // Stock en place moins ce que les autres sorties en préparation ont déjà réservé
-const stockDisponible = async (connexion) => retirerReserves(connexion, await lignesEnStock(connexion, true));
+// (une palette de connecteurs descendue pour être complétée est bloquée jusqu'à son retour)
+const stockDisponible = async (connexion) => retirerReserves(connexion, (await lignesEnStock(connexion, true)).filter((l) => !l.palette_descendue));
 
 // Préparation et ses prélèvements, pour le téléphone
 async function chargerPreparation(connexion, id, verrou = false) {
@@ -54,7 +57,12 @@ async function chargerPreparation(connexion, id, verrou = false) {
      WHERE l.preparation_id = ? LIMIT 1`,
     [id]
   );
-  const prelevements = lignes.map((l) => ({ ...l, valide: !!l.valide, hors_fifo: !!l.hors_fifo }));
+  // pièces des colis à prendre (visibilité seulement : la sortie se compte en colis)
+  const infos = await piecesParLigne(connexion, lignes.map((l) => l.reception_id));
+  const prelevements = lignes.map((l) => {
+    const pc = piecesDe(infos.get(l.reception_id), l.quantite);
+    return { ...l, valide: !!l.valide, hors_fifo: !!l.hors_fifo, pieces: pc?.pieces ?? null, pieces_approx: pc?.approx ?? false };
+  });
   return {
     ...p,
     type: info?.type ?? null,
@@ -78,6 +86,27 @@ function verifierProprietaire(p, utilisateur) {
     throw erreur(403, "Cette sortie est préparée par un autre magasinier");
   }
 }
+
+// GET /api/mobile/export/references?q=F04 : références en stock (disponibles pour une sortie) qui contiennent le
+// texte tapé, pour la saisie au clavier de la référence demandée par la production. 10 au plus, avec le disponible.
+router.get('/references', async (req, res, next) => {
+  try {
+    const q = String(req.query.q ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+    if (!q) return res.json([]);
+    const lignes = await retirerReserves(db, (await lignesEnStock(db)).filter((l) => !l.palette_descendue && l.emplacement));
+    const parReference = new Map();
+    for (const l of lignes) {
+      const ref = String(l.reference).toUpperCase();
+      if (!ref.includes(q)) continue;
+      const r = parReference.get(ref) ?? { reference: ref, type: l.type, disponible: 0 };
+      r.disponible += Number(l.quantite);
+      parReference.set(ref, r);
+    }
+    // celles qui commencent par le texte tapé d'abord, puis par ordre alphabétique
+    const liste = [...parReference.values()].sort((a, b) => Number(b.reference.startsWith(q)) - Number(a.reference.startsWith(q)) || a.reference.localeCompare(b.reference));
+    res.json(liste.slice(0, 10));
+  } catch (err) { next(err); }
+});
 
 // POST /api/mobile/export/preparer  { uuid, reference, quantite, destination }
 router.post('/preparer', async (req, res, next) => {
@@ -110,6 +139,12 @@ router.post('/preparer', async (req, res, next) => {
         message: `Terminez ou annulez d'abord la sortie en cours (${enCours.quantite} × ${enCours.reference})`,
         preparation_id: enCours.id,
       });
+    }
+    // Un carton ouvert par la sortie précédente : ses cosses restantes doivent d'abord descendre
+    const descente = await D.descenteEnCours(connexion, req.utilisateur.id);
+    if (descente) {
+      await connexion.rollback();
+      return res.status(409).json({ code: 'descente_requise', message: `D'abord : ${D.texteDescente(descente)}`, descente });
     }
 
     const disponible = await stockDisponible(connexion);
@@ -179,6 +214,8 @@ router.post('/:id/annuler', async (req, res, next) => {
       "UPDATE preparations_export SET statut = 'annulee', date_fin = NOW(), motif_fin = ? WHERE id = ? AND statut = 'en_cours'",
       [`Annulée par ${req.utilisateur.matricule}`, p.id]
     );
+    // Sortie urgente : le colis posé reste au stock à son emplacement
+    await db.query("UPDATE sorties_urgentes SET statut = 'annulee' WHERE preparation_id = ? AND statut = 'posee'", [p.id]);
     res.json(pourTelephone(await chargerPreparation(db, p.id)));
   } catch (err) { next(err); }
 });
@@ -201,7 +238,7 @@ async function prendreHorsFifo(connexion, p, ticket, scanne) {
   );
   for (const r of autres) pris.set(r.placement_id, (pris.get(r.placement_id) ?? 0) + Number(r.quantite));
   const choisi = (await lignesEnStock(connexion, true))
-    .filter((l) => l.reference.toUpperCase() === p.reference && l.emplacement === scanne && memeLot(l.lot, ticket))
+    .filter((l) => !l.palette_descendue && l.reference.toUpperCase() === p.reference && l.emplacement === scanne && memeLot(l.lot, ticket))
     .map((l) => ({ ...l, libre: l.quantite - (pris.get(l.id) ?? 0) }))
     .filter((l) => l.libre > 0)
     .sort((a, b) => a.date_reception.localeCompare(b.date_reception))[0];
@@ -333,15 +370,32 @@ router.post('/:id/scan', operation('export', async (connexion, req) => {
     );
     p.statut = 'terminee';
     p.export_id = exportId;
+    // Sortie urgente (colis posé pendant la réception de son import) : elle est faite
+    const [urgence] = await connexion.query(
+      "UPDATE sorties_urgentes SET statut = 'sortie', export_id = ?, date_sortie = NOW() WHERE preparation_id = ? AND statut = 'posee'",
+      [exportId, p.id]
+    );
+    const urgente = urgence.affectedRows > 0;
+    // Cosses prises dans un carton neuf (en haut) : les cosses restantes de ce carton doivent descendre tout de suite
+    const [prises] = await connexion.query(
+      "SELECT ticket FROM controles_mobile WHERE preparation_id = ? AND controle = 'export' AND resultat = 'prelevement_ok' AND ticket IS NOT NULL",
+      [p.id]
+    );
+    const idsDescentes = await D.creerDescentes(connexion, {
+      tickets: [...prises.map((x) => x.ticket), ticket.cle], preparationId: p.id, exportId, utilisateurId: req.utilisateur.id,
+    });
+    const descentes = [];
+    for (const id of idsDescentes) descentes.push(await D.vueDescente(connexion, id));
     const restantParPlace = new Map();
     for (const l of enStock.values()) if (l.emplacement) restantParPlace.set(l.emplacement, (restantParPlace.get(l.emplacement) ?? 0) + l.quantite);
     for (const l of p.lignes) if (l.emplacement) restantParPlace.set(l.emplacement, restantParPlace.get(l.emplacement) - l.quantite);
     const liberees = [...new Set(p.lignes.map((l) => l.emplacement).filter((e) => e && restantParPlace.get(e) === 0))];
     return repondre('sortie_terminee', {
       ...donneesScan,
-      message: `${avant}Sortie terminée${horsFifo ? ' (hors FIFO)' : ''} : ${p.quantite} × ${p.reference} vers ${p.destination} (export n° ${exportId}).` +
-        (liberees.length ? ` Place(s) libérée(s) : ${liberees.join(', ')}.` : ''),
-      extra: { export_id: exportId, places_liberees: liberees },
+      message: `${avant}Sortie ${urgente ? 'urgente ' : ''}terminée${horsFifo ? ' (hors FIFO)' : ''} : ${p.quantite} × ${p.reference} vers ${p.destination} (export n° ${exportId}).` +
+        (liberees.length ? ` Place(s) libérée(s) : ${liberees.join(', ')}.` : '') +
+        descentes.map((v) => ` ${D.texteDescente(v)}`).join(''),
+      extra: { export_id: exportId, places_liberees: liberees, urgente, descente: descentes[0] ?? null },
     });
   };
 

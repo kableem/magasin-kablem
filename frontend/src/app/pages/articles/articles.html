@@ -225,15 +225,40 @@
         </div>
       </div>
       @if (form.famille === 'connecteur') {
-        <label class="champ">
-          Famille de connecteur
-          <input name="categorie" list="categories-connecteur" placeholder="ex. GCOR, NASTRO, COMPOSANT PLASTIQUE" autocomplete="off" [(ngModel)]="form.categorie" />
-          <datalist id="categories-connecteur">
-            @for (c of categoriesConnecteur(); track c.nom) {
-              <option [value]="c.nom"></option>
+        <!-- Famille de connecteur : on touche une famille existante, ou on tape le nom d'une nouvelle -->
+        <div class="champ" data-famille="connecteur">
+          <span>Famille de connecteur</span>
+          <div class="recherche-famille">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+            <input name="categorie" placeholder="Chercher, ou taper une nouvelle famille" autocomplete="off" [(ngModel)]="form.categorie" (ngModelChange)="erreurForm.set('')" />
+            @if (form.categorie) {
+              <button type="button" class="effacer" (click)="form.categorie = ''" aria-label="Effacer">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+              </button>
             }
-          </datalist>
-        </label>
+          </div>
+          @if (famillesProposees().length) {
+            <div class="familles-connecteur" role="radiogroup" aria-label="Famille de connecteur">
+              @for (c of famillesProposees(); track c.nom) {
+                <button type="button" role="radio" [attr.aria-checked]="estFamilleChoisie(c.nom)" [class.actif]="estFamilleChoisie(c.nom)" (click)="form.categorie = c.nom; erreurForm.set('')">
+                  <svg class="coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                  <strong>{{ c.nom }}</strong>
+                  <small>{{ c.total }} réf.</small>
+                </button>
+              }
+            </div>
+          }
+          @if (nouvelleFamille(); as n) {
+            <p class="nouvelle-famille">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+              @if (famillesProposees().length) {
+                <span>Touchez la famille ci-dessus pour la choisir. Sinon, <b>« {{ n }} »</b> sera créée comme nouvelle famille.</span>
+              } @else {
+                <span>Nouvelle famille <b>« {{ n }} »</b> : elle sera créée à l'enregistrement.</span>
+              }
+            </p>
+          }
+        </div>
       }
       @if (form.famille === 'cosse') {
         <div class="champ">

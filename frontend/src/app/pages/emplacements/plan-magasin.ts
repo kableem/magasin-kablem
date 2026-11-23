@@ -35,6 +35,7 @@ export interface Bloc {
   contreMur: boolean;
   nbEmplacements: number; // emplacements par niveau d'une façade
   niveauxCosses: number[]; // niveaux réservés aux cosses dans ce bloc
+  nbNiveaux: number; // 5 (0 à 4), 6 pour le bloc E
   facades: Facade[];
 }
 
@@ -46,6 +47,7 @@ export interface DefinitionBloc {
   nbFacades: 1 | 2;
   emplacements?: number; // par niveau d'une façade (11 par défaut)
   niveauxCosses?: number[]; // niveaux 1 et 2 par défaut
+  nbNiveaux?: number; // 5 par défaut (0 à 4)
 }
 
 const DEFINITION_BLOCS: DefinitionBloc[] = [
@@ -53,7 +55,7 @@ const DEFINITION_BLOCS: DefinitionBloc[] = [
   { lettre: 'B', nbFacades: 2 },
   { lettre: 'C', nbFacades: 2 },
   { lettre: 'D', nbFacades: 2 },
-  { lettre: 'E', nbFacades: 2, emplacements: 14, niveauxCosses: [1, 2, 3] },
+  { lettre: 'E', nbFacades: 2, emplacements: 14, niveauxCosses: [1, 2, 3], nbNiveaux: 6 }, // un niveau de plus : 4 et 5 = connecteurs
   { lettre: 'F', nbFacades: 2, emplacements: 17 },
   { lettre: 'G', nbFacades: 2 },
   { lettre: 'H', nbFacades: 1 },
@@ -70,7 +72,7 @@ function numeroA(bloc: string, facade: 1 | 2, p: number, n: number): number {
   return bloc === 'D' ? p : n - 1 - p; // D : 00 contre la porte ; autres : 00 au bout ouvert
 }
 
-function construireFacade(bloc: string, numero: 1 | 2, nbFacades: number, lettres: string[], nbEmplacements: number): Facade {
+function construireFacade(bloc: string, numero: 1 | 2, nbFacades: number, lettres: string[], nbEmplacements: number, nbNiveaux: number): Facade {
   const i = lettres.indexOf(bloc);
   // Façade 1 regarde vers le bloc suivant (côté D), façade 2 vers le bloc précédent (côté A).
   // Dernier bloc à une seule façade (contre le mur du bout, comme A) : il regarde vers le bloc précédent.
@@ -87,7 +89,7 @@ function construireFacade(bloc: string, numero: 1 | 2, nbFacades: number, lettre
     libelle: nbFacades === 1 ? 'Façade unique' : `Façade ${numero}`,
     allee,
     normale,
-    niveaux: [...NIVEAUX].reverse().map((niveau) => ({
+    niveaux: Array.from({ length: nbNiveaux }, (_, n) => n).reverse().map((niveau) => ({
       niveau,
       emplacements: Array.from({ length: nbEmplacements }, (_, p) => {
         const n = numeroA(bloc, numero, p, nbEmplacements);
@@ -99,13 +101,14 @@ function construireFacade(bloc: string, numero: 1 | 2, nbFacades: number, lettre
 
 export function construireBlocs(definitions: DefinitionBloc[]): Bloc[] {
   const lettres = definitions.map((b) => b.lettre);
-  return definitions.map(({ lettre, nbFacades, emplacements = EMPLACEMENTS_PAR_FACADE, niveauxCosses = [1, 2] }) => ({
+  return definitions.map(({ lettre, nbFacades, emplacements = EMPLACEMENTS_PAR_FACADE, niveauxCosses = [1, 2], nbNiveaux = NIVEAUX.length }) => ({
     lettre,
     contreMur: nbFacades === 1,
     nbEmplacements: emplacements,
     niveauxCosses,
+    nbNiveaux,
     facades: Array.from({ length: nbFacades }, (_, i) =>
-      construireFacade(lettre, (i + 1) as 1 | 2, nbFacades, lettres, emplacements)
+      construireFacade(lettre, (i + 1) as 1 | 2, nbFacades, lettres, emplacements, nbNiveaux)
     ),
   }));
 }
@@ -122,13 +125,13 @@ export const TOUS_LES_EMPLACEMENTS: Emplacement[] = tousLesEmplacements(BLOCS);
 export const NIVEAUX_PAR_TYPE: Record<'bobine' | 'cosse' | 'connecteur', number[]> = {
   bobine: [0],
   cosse: [1, 2, 3],
-  connecteur: [3, 4],
+  connecteur: [3, 4, 5], // 5 : bloc E seulement
 };
 
 export const LIBELLE_NIVEAUX_TYPE: Record<'bobine' | 'cosse' | 'connecteur', string> = {
   bobine: 'niveau 0',
-  cosse: 'niveaux 1 et 2 (et 3 du bloc E)',
-  connecteur: 'niveaux 3 et 4',
+  cosse: 'niveaux 1 et 2 (1 à 3 du bloc E) : cosses séparées',
+  connecteur: 'niveaux 3 et 4 (4 et 5 du bloc E) : connecteurs et palettes de cartons de cosses neufs',
 };
 
 // Type de produit rangé à un niveau donné, hors bloc E (voir typeEmplacement)
@@ -136,9 +139,21 @@ export function typeDuNiveau(niveau: number): 'bobine' | 'cosse' | 'connecteur' 
   return niveau === 0 ? 'bobine' : niveau <= 2 ? 'cosse' : 'connecteur';
 }
 
+// Niveau 0 : bobines des imports dans les blocs A à D ; blocs E à H = stockage des bobines WIP (retours
+// incomplets de la production, non gérés par l'application). Emplacements bloqués : on n'y pose rien.
+export const BLOCS_BOBINES = ['A', 'B', 'C', 'D'];
+export const EMPLACEMENTS_BLOQUES = new Map<string, string>([
+  ['D000', 'près du bureau : obstacle, on ne peut pas y poser de bobine'],
+  ...['D300', 'D301', 'D400', 'D401'].map((c): [string, string] => [c, 'près du bureau : pas de place pour les connecteurs aux niveaux 3 et 4']),
+]);
+export const estBobineWip = (e: Emplacement): boolean => e.niveau === 0 && !BLOCS_BOBINES.includes(e.bloc);
+export const estBloque = (e: Emplacement): boolean => EMPLACEMENTS_BLOQUES.has(e.code);
+
 // Type de produit rangé à cet emplacement (bloc E : le niveau 3 est pour les cosses)
-export function typeEmplacement(e: Emplacement): 'bobine' | 'cosse' | 'connecteur' {
-  if (e.niveau === 0) return 'bobine';
+// bobine_wip : niveau 0 des blocs E à H (bobines WIP, non géré) ; bloque : on n'y pose rien
+export function typeEmplacement(e: Emplacement): 'bobine' | 'cosse' | 'connecteur' | 'bobine_wip' | 'bloque' {
+  if (estBloque(e)) return 'bloque';
+  if (e.niveau === 0) return estBobineWip(e) ? 'bobine_wip' : 'bobine';
   return BLOCS.find((b) => b.lettre === e.bloc)?.niveauxCosses.includes(e.niveau) ? 'cosse' : 'connecteur';
 }
 
@@ -152,6 +167,13 @@ export function typeEmplacement(e: Emplacement): 'bobine' | 'cosse' | 'connecteu
 function suite(premier: number, dernier: number): string[] {
   const pas = dernier >= premier ? 1 : -1;
   return Array.from({ length: Math.abs(dernier - premier) + 1 }, (_, i) => String(premier + i * pas).padStart(4, '0'));
+}
+
+// Numéros qui commencent à la place n° « debut » (les places d'avant n'ont pas d'étiquette)
+function apres(debut: number, numeros: string[]): string[] {
+  const liste: string[] = [];
+  numeros.forEach((n, i) => (liste[debut + i] = n));
+  return liste;
 }
 
 // A → N, ou Z → O : lettres comme les colonnes d'Excel (A … Z, AA, AB…)
@@ -172,18 +194,19 @@ function lettres(premiere: string, derniere: string): string[] {
 
 // bloc-façade de l'application → niveau → numéros, du mur du fond au bout ouvert
 const NUMEROTATION: Record<string, Record<number, string[]>> = {
-  'A-1': { 1: suite(12, 22), 2: suite(23, 33) },
-  'B-1': { 1: suite(122, 132), 2: suite(133, 143) },
-  'B-2': { 1: suite(67, 77), 2: suite(78, 88) },
-  'C-1': { 1: suite(232, 242), 2: suite(243, 253) },
-  'C-2': { 1: suite(177, 187), 2: suite(188, 198) },
-  'D-1': { 1: suite(342, 352), 2: suite(353, 363) },
-  'D-2': { 1: suite(287, 297), 2: suite(298, 308) },
-  'E-2': { 1: suite(614, 627), 2: suite(628, 641), 3: lettres('A', 'N') },
+  'A-1': { 0: suite(1, 11), 1: suite(12, 22), 2: suite(23, 33), 3: suite(34, 44), 4: suite(45, 55) },
+  'B-1': { 0: suite(111, 121), 1: suite(122, 132), 2: suite(133, 143), 3: suite(144, 154), 4: suite(155, 165) },
+  'B-2': { 0: suite(56, 66), 1: suite(67, 77), 2: suite(78, 88), 3: suite(89, 99), 4: suite(100, 110) },
+  'C-1': { 0: suite(221, 231), 1: suite(232, 242), 2: suite(243, 253), 3: suite(254, 264), 4: suite(265, 275) },
+  'C-2': { 0: suite(166, 176), 1: suite(177, 187), 2: suite(188, 198), 3: suite(199, 209), 4: suite(210, 220) },
+  // niveaux 3 et 4 : les 2 premières places (côté mur du fond, près du bureau) sont bloquées, sans étiquette
+  'D-1': { 0: suite(331, 341), 1: suite(342, 352), 2: suite(353, 363), 3: apres(2, suite(366, 374)), 4: apres(2, suite(377, 385)) },
+  'D-2': { 0: suite(276, 286), 1: suite(287, 297), 2: suite(298, 308), 3: suite(309, 319), 4: suite(320, 330) },
+  'E-2': { 1: suite(614, 627), 2: suite(628, 641), 3: lettres('A', 'N'), 4: suite(642, 655), 5: suite(656, 669) },
   // Niveau 3 de la façade B : AC, AB puis Z → O (il n'y a pas d'étiquette « AA ») = 14 places
-  'E-1': { 1: suite(697, 684), 2: suite(711, 698), 3: ['AC', 'AB', ...lettres('Z', 'O')] },
-  'F-2': { 1: suite(773, 757), 2: suite(790, 774) },
-  'F-1': { 1: suite(858, 842), 2: suite(875, 859) },
+  'E-1': { 1: suite(697, 684), 2: suite(711, 698), 3: ['AC', 'AB', ...lettres('Z', 'O')], 4: suite(725, 712), 5: suite(739, 726) },
+  'F-2': { 1: suite(773, 757), 2: suite(790, 774), 3: suite(807, 791), 4: suite(824, 808) },
+  'F-1': { 1: suite(858, 842), 2: suite(875, 859), 3: suite(892, 876), 4: suite(909, 893) },
 };
 
 // Code de l'application → numéro du magasin (ex. A110 → 0012)
@@ -205,8 +228,8 @@ export function codeDuNumero(texte: string | null | undefined): string | null {
 // Nom d'un emplacement pour l'affichage : « 0012 (A110) », ou le code seul s'il n'a pas de numéro
 export function nomEmplacement(code: string | null | undefined): string {
   if (!code) return '';
-  const numero = NUMEROS_MAGASIN.get(code);
-  return numero ? `${numero} (${code})` : code;
+  // seul le numéro de l'étiquette est affiché ; le code (« D100 ») reste interne à l'application
+  return NUMEROS_MAGASIN.get(code) ?? code;
 }
 
 // Capacité d'un emplacement (= 1 palette) : 1 grande bobine, 2 moyennes ou 6 petites ;
@@ -304,7 +327,7 @@ function ordreProximite(a: Emplacement, b: Emplacement): number {
 // Rang de chaque emplacement dans son niveau : 1 = le plus proche de la porte
 export function rangsProximite(emplacements: Emplacement[]): Map<string, number> {
   return new Map<string, number>(
-    NIVEAUX.flatMap((niveau) =>
+    [...NIVEAUX, 5].flatMap((niveau) =>
       emplacements
         .filter((e) => e.niveau === niveau)
         .sort(ordreProximite)
@@ -319,68 +342,11 @@ export const EMPLACEMENTS_PAR_PROXIMITE = [...TOUS_LES_EMPLACEMENTS].sort(
   (a, b) => a.niveau - b.niveau || ordreProximite(a, b)
 );
 
-// ---------- Connecteurs : volume, poids, taille du carton (mêmes calculs que le serveur) ----------
-
-export interface LimitesPaletteConnecteur {
-  longueur: number;
-  largeur: number;
-  hauteur_n3: number;
-  hauteur_n4: number;
-  taux: number;
-  poids_max: number;
-}
-
-interface CartonMesure {
-  longueur?: number | null;
-  largeur?: number | null;
-  hauteur?: number | null;
-  poids?: number | null;
-}
-
-export function volumeCarton(c: CartonMesure): number {
-  return Number(c.longueur) * Number(c.largeur) * Number(c.hauteur);
-}
-
-// Hauteur utile et volume utilisable d'une palette à ce niveau (zone tampon : comme le niveau 3)
-export function limitesNiveau(niveau: number, l: LimitesPaletteConnecteur) {
-  const hauteur = niveau === 4 ? l.hauteur_n4 : l.hauteur_n3;
-  return { hauteur, volumeMax: (l.longueur * l.largeur * hauteur * l.taux) / 100 };
-}
-
-function cartonRentre(c: CartonMesure, l: LimitesPaletteConnecteur, hauteur: number): boolean {
-  const L = Number(c.longueur), lg = Number(c.largeur);
-  return Number(c.hauteur) <= hauteur && ((L <= l.longueur && lg <= l.largeur) || (L <= l.largeur && lg <= l.longueur));
-}
-
-// Message si le carton ne peut aller sur aucune palette (refusé à la saisie), sinon null
-export function controlerCarton(c: CartonMesure, l: LimitesPaletteConnecteur): string | null {
-  const noms: Record<string, string> = { longueur: 'longueur', largeur: 'largeur', hauteur: 'hauteur', poids: 'poids' };
-  for (const champ of Object.keys(noms)) {
-    const v = Number((c as Record<string, unknown>)[champ]);
-    if (!Number.isFinite(v) || v <= 0) return `${noms[champ]} manquant(e) ou invalide`;
-  }
-  if (Number(c.poids) > l.poids_max) return `${c.poids} kg dépasse la limite de ${l.poids_max} kg par palette`;
-  const ok = [3, 4].some((n) => {
-    const lim = limitesNiveau(n, l);
-    return cartonRentre(c, l, lim.hauteur) && volumeCarton(c) <= lim.volumeMax;
-  });
-  if (!ok) {
-    return `ne rentre sur aucune palette (${l.longueur} × ${l.largeur} cm, hauteur ${l.hauteur_n3} cm au niveau 3, ${l.hauteur_n4} cm au niveau 4)`;
-  }
-  return null;
-}
-
-// Une ligne de connecteurs (un ou plusieurs cartons) peut-elle aller sur cet emplacement ?
-// (contrôle approché pour proposer des emplacements ; le serveur vérifie carton par carton)
+// ---------- Connecteurs (règle provisoire, en attendant les palettes de connecteurs) ----------
+// Plus de calcul de volume ni de poids : un emplacement reçoit les cartons d'une seule référence et d'un seul lot.
 export function placeConnecteur(
-  ligne: { volume?: number | null; poids_total?: number | null; hauteur?: number | null },
-  occupants: { volume?: number | null; poids_total?: number | null; type: string }[],
-  niveau: number,
-  l: LimitesPaletteConnecteur
+  ligne: { reference: string; lot: string },
+  occupants: { reference: string; lot: string; type: string }[]
 ): boolean {
-  if (occupants.some((o) => o.type !== 'connecteur')) return false;
-  const lim = limitesNiveau(niveau, l);
-  const volume = occupants.reduce((s, o) => s + Number(o.volume ?? 0), 0) + Number(ligne.volume ?? 0);
-  const poids = occupants.reduce((s, o) => s + Number(o.poids_total ?? 0), 0) + Number(ligne.poids_total ?? 0);
-  return Number(ligne.hauteur ?? 0) <= lim.hauteur && volume <= lim.volumeMax && poids <= l.poids_max + 1e-9;
+  return occupants.every((o) => o.type === 'connecteur' && o.reference.toUpperCase() === ligne.reference.toUpperCase() && o.lot === ligne.lot);
 }

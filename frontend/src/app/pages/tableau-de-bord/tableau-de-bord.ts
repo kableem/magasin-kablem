@@ -1,6 +1,8 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
+import { AuthService } from '../../services/auth';
+import { MailsAlerte } from './mails-alerte';
 import {
   MOTIFS_RECLAMATION,
   ReceptionService,
@@ -16,12 +18,16 @@ type Etat = 'bon' | 'attention' | 'critique';
 // remplissage, alertes, activité du jour et de la semaine, réclamations.
 @Component({
   selector: 'app-tableau-de-bord',
-  imports: [DatePipe, RouterLink],
+  imports: [DatePipe, RouterLink, MailsAlerte],
   templateUrl: './tableau-de-bord.html',
   styleUrl: './tableau-de-bord.css',
 })
 export class TableauDeBordPage implements OnInit {
   private service = inject(ReceptionService);
+  // Mails d'alerte au service logistique : réglés par l'administrateur
+  private auth = inject(AuthService);
+  readonly estAdmin = computed(() => this.auth.utilisateur()?.role === 'admin');
+  readonly mailsOuverts = signal(false);
 
   readonly nombre = formatNombre;
   readonly libelleMotif = libelleMotif;

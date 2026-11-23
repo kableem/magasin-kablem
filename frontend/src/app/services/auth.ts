@@ -8,16 +8,11 @@ export interface Utilisateur {
   matricule: string;
   nom: string;
   prenom: string;
-  role: 'admin' | 'chef_magasin' | 'magasinier' | 'planificateur';
+  role: 'admin' | 'chef_magasin' | 'magasinier';
 }
 
 // Gèrent le magasin (emplacements, plan de rangement, paramètres) : administrateur et chef de magasin.
 // Seul l'administrateur gère les utilisateurs.
-// Planificateur : uniquement la gestion des articles
-export function estPlanificateur(u: { role: string } | null | undefined): boolean {
-  return u?.role === 'planificateur';
-}
-
 export function peutGererMagasin(u: { role: string } | null | undefined): boolean {
   return u?.role === 'admin' || u?.role === 'chef_magasin';
 }
@@ -33,7 +28,7 @@ const CLE_SESSION = 'kablem_session';
 export class AuthService {
   private http = inject(HttpClient);
   private router = inject(Router);
-  private apiUrl = 'http://localhost:3000/api/auth';
+  private apiUrl = '/api/auth';
 
   private session = signal<Session | null>(this.lireSession());
   readonly utilisateur = computed(() => this.session()?.utilisateur ?? null);

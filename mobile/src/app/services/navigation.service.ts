@@ -29,9 +29,11 @@ export class NavigationService {
   }
 
   // L'écran entre dans une étape intérieure (revenir = retour à l'étape précédente), ou en sort (null)
+  // L'entrée appartient à l'écran où elle a été ajoutée : un autre écran ouvert ensuite (ex. Réception → « Ranger
+  // maintenant ») ajoute la sienne ; sinon, en la retirant, le retour quitterait le nouvel écran.
   etape(proprietaire: object, revenir: (() => void) | null): void {
     if (revenir) {
-      if (!this.proprietaire) {
+      if (!this.proprietaire || this.url !== this.adresse()) {
         history.pushState({ ...history.state, kEtape: true }, '');
         this.url = this.adresse();
       }
@@ -40,8 +42,11 @@ export class NavigationService {
     } else if (this.proprietaire === proprietaire) {
       this.proprietaire = null;
       this.revenir = null;
-      this.ignorer++;
-      history.back();
+      // seulement si l'entrée est bien celle de l'écran affiché
+      if (this.adresse() === this.url) {
+        this.ignorer++;
+        history.back();
+      }
     }
   }
 

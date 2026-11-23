@@ -477,3 +477,28 @@
 .sections-page button span { padding: 1px 8px; font-size: 12px; border-radius: 999px; background: #eef1f7; color: var(--nuit); }
 .sections-page button.actif { color: #fff; background: var(--nuit); }
 .sections-page button.actif span { background: #fff; }
+
+/* ---------- Cartons : couleur de la famille (cosses en kraft, connecteurs en violet) ----------
+   L'état reste visible : fond de la case et barre du bas (vert, orange, rouge). */
+[data-carton='cosse'] { --carton: #f0b76a; --carton-fonce: #d68f34; --carton-bord: #a8661a; --carton-texte: #4a2a05; }
+[data-carton='connecteur'] { --carton: #c8adf0; --carton-fonce: #a57ce3; --carton-bord: #6a35b5; --carton-texte: #2c1258; }
+.case[data-etat][data-carton] .charge {
+  position: relative;
+  color: var(--carton-texte);
+  /* scotch au milieu, joints entre les cartons, dégradé du carton */
+  background:
+    linear-gradient(90deg, transparent calc(50% - 5px), rgba(255, 255, 255, 0.45) calc(50% - 5px) calc(50% + 5px), transparent calc(50% + 5px)) top / 100% 10px no-repeat,
+    repeating-linear-gradient(90deg, transparent 0 calc(33.33% - 1px), rgba(0, 0, 0, 0.09) calc(33.33% - 1px) 33.33%),
+    linear-gradient(180deg, var(--carton) 0%, var(--carton-fonce) 100%);
+  border: 1.5px solid var(--carton-bord);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 0 rgba(0, 0, 0, 0.08);
+}
+.case[data-etat][data-carton] .charge small { font-weight: 700; opacity: 0.85; }
+.carton-legende { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--carton-texte); }
+.carton-legende i {
+  width: 22px; height: 16px; border-radius: 3px; border: 1.5px solid var(--carton-bord);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(50% - 1px), rgba(0, 0, 0, 0.18) calc(50% - 1px) 50%),
+    linear-gradient(180deg, var(--carton), var(--carton-fonce));
+}
+.legende-etats .etat-legende + .carton-legende { padding-left: 18px; border-left: 1px solid var(--bord); }

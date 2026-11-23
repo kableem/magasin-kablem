@@ -32,8 +32,8 @@
 
 <p class="regle-niveaux">
   Rangement : <span data-type="bobine">Bobines → niveau 0</span>
-  <span data-type="cosse">Cosses → niveaux 1 et 2 (et 3 du bloc E)</span>
-  <span data-type="connecteur">Connecteurs → niveaux 3 et 4</span>
+  <span data-type="cosse">Cosses séparées → niveaux 1 et 2 (1 à 3 du bloc E)</span>
+  <span data-type="connecteur">Connecteurs et palettes de cartons de cosses neufs → niveaux 3 et 4 (4 et 5 du bloc E)</span>
 </p>
 
 @if (nbTampon()) {
@@ -82,7 +82,7 @@
         <div class="ref-export" [attr.data-type]="r.type">
           <span class="code ref">{{ r.reference }}</span>
           <span class="badge-type">{{ libelle(r) }}</span>
-          <span class="dispo">{{ nombre(r.disponible) }} en stock</span>
+          <span class="dispo">{{ nombre(r.disponible) }} colis en stock</span>
           <button type="button" class="btn btn-principal btn-export" (click)="ouvrirExport(r)">
             <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z" /></svg>
             Exporter
@@ -104,7 +104,8 @@
           <th>Référence</th>
           <th>Type</th>
           <th>Lot</th>
-          <th class="droite">Quantité</th>
+          <th class="droite">Colis</th>
+          <th class="droite" title="Pièces des colis, lues sur les tickets à la réception (visibilité seulement)">Quantité (pièces)</th>
           <th>Date de réception</th>
           <th>Emplacement</th>
         </tr>
@@ -116,15 +117,19 @@
             <td><span class="badge-type" [attr.data-type]="l.type">{{ libelle(l) }}</span></td>
             <td class="code">{{ l.lot }}</td>
             <td class="droite"><strong>{{ nombre(l.quantite) }}</strong></td>
+            <td class="droite pieces" [class.inconnu]="l.pieces === null || l.pieces === undefined" [title]="l.pieces_approx ? 'Estimé : les colis de ce lot n’ont pas tous la même quantité' : ''">{{ pieces(l) }}</td>
             <td class="date">{{ l.date_reception | date: 'dd/MM/yyyy HH:mm' }}</td>
             <td>
               @if (!estAdmin()) {
                 <!-- Magasinier : consultation seulement -->
                 @if (l.emplacement) {
-                  <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)" [attr.title]="'Code application : ' + l.emplacement">{{ nom(l.emplacement) }}</span>
+                  <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)">{{ nom(l.emplacement) }}</span>
                 } @else {
                   <span class="non-range">Non rangé</span>
                 }
+              } @else if (l.emplacement && l.palette_cosses_id) {
+                <!-- palette de cosses : elle se déplace en entier avec « Ranger le magasin » sur le mobile -->
+                <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)" title="Palette de cosses : déplacez-la en entier avec « Ranger le magasin » sur le mobile">{{ nom(l.emplacement) }}</span>
               } @else if (l.emplacement) {
                 <button
                   type="button"
@@ -140,6 +145,11 @@
                   <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" /></svg>
                   Affecter
                 </button>
+              }
+              @if (l.palette_numero) {
+                <small class="carton-ligne">palette n° {{ l.palette_numero }}{{ l.carton_numero ? ' · carton n° ' + l.carton_numero : '' }}</small>
+              } @else if (l.carton_numero) {
+                <small class="carton-ligne">carton n° {{ l.carton_numero }}</small>
               }
             </td>
           </tr>
@@ -161,7 +171,17 @@
         <tfoot>
           <tr>
             <td colspan="3">Totale <small>({{ filtrees().length }} ligne(s))</small></td>
-            <td class="droite"><strong>{{ nombre(total()) }}</strong></td>
+            <td class="droite"><strong>{{ nombre(total()) }}</strong> <small>colis</small></td>
+            <td class="droite pieces">
+              @if (totalPieces().connues) {
+                <strong>{{ totalPieces().approx ? '≈ ' : '' }}{{ nombre(totalPieces().pieces) }}</strong>
+                @if (totalPieces().connues < filtrees().length) {
+                  <small class="partiel">sur {{ totalPieces().connues }} ligne(s) connue(s)</small>
+                }
+              } @else {
+                —
+              }
+            </td>
             <td colspan="2"></td>
           </tr>
         </tfoot>
@@ -208,7 +228,7 @@
         <small>
           {{ libelle(l) }} : {{ libelleNiveaux[l.type] }} ·
           @if (l.type === 'connecteur') {
-            {{ l.quantite }} carton(s), {{ l.poids_total }} kg · {{ limites().poids_max }} kg max par palette ·
+            {{ l.quantite }} carton(s) · une seule référence et un seul lot par emplacement ·
           } @else {
             {{ capacite(l) }} par palette ·
           }
@@ -259,7 +279,7 @@
 
       <p class="palette-info" [attr.data-type]="r.type">
         <span class="code ref">{{ r.reference }}</span> · <span class="badge-type">{{ libelle(r) }}</span> ·
-        {{ nombre(r.disponible) }} en stock
+        {{ nombre(r.disponible) }} colis en stock
       </p>
 
       @if (estAdministrateur()) {
@@ -272,12 +292,12 @@
       <div class="champs-export">
         @if (sansFifo()) {
           <div class="total-libre">
-            Quantité à sortir
+            Colis à sortir
             <strong>{{ nombre(totalLibre()) }}</strong>
           </div>
         } @else {
         <label>
-          Quantité à sortir
+          Nombre de colis à sortir
           <input
             name="quantite"
             type="number"
@@ -339,8 +359,9 @@
                 <th>Emplacement</th>
                 <th>Lot</th>
                 <th>Date de réception</th>
-                <th class="droite">Disponible</th>
-                <th class="droite">À sortir</th>
+                <th class="droite">Colis disponibles</th>
+                <th class="droite">Pièces</th>
+                <th class="droite">Colis à sortir</th>
               </tr>
             </thead>
             <tbody>
@@ -349,7 +370,7 @@
                   <td class="rang">{{ i + 1 }}</td>
                   <td>
                     @if (l.emplacement) {
-                      <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)" [attr.title]="'Code application : ' + l.emplacement">{{ nom(l.emplacement) }}</span>
+                      <span class="etiquette-empl lecture" [class.tampon]="estTampon(l.emplacement)">{{ nom(l.emplacement) }}</span>
                     } @else {
                       <span class="non-range">Non rangé</span>
                     }
@@ -359,6 +380,7 @@
                   <td class="droite">
                     <button type="button" class="lien-tout" (click)="toutLeLot(i)" title="Tout le lot / rien">{{ nombre(l.quantite) }}</button>
                   </td>
+                  <td class="droite pieces">{{ pieces(l) }}</td>
                   <td class="droite">
                     <input
                       class="qte-libre"
@@ -386,7 +408,8 @@
               <th>Emplacement</th>
               <th>Lot</th>
               <th>Date de réception</th>
-              <th class="droite">Quantité</th>
+              <th class="droite">Colis</th>
+              <th class="droite">Pièces</th>
             </tr>
           </thead>
           <tbody>
@@ -394,7 +417,7 @@
               <tr>
                 <td>
                   @if (p.emplacement) {
-                    <span class="etiquette-empl lecture" [class.tampon]="estTampon(p.emplacement)" [attr.title]="'Code application : ' + p.emplacement">{{ nom(p.emplacement) }}</span>
+                    <span class="etiquette-empl lecture" [class.tampon]="estTampon(p.emplacement)">{{ nom(p.emplacement) }}</span>
                     @if (p.place_liberee) {
                       <small class="liberee">place libérée</small>
                     }
@@ -408,10 +431,14 @@
                 <td class="code">{{ p.lot }}</td>
                 <td class="date">{{ p.date_reception | date: 'dd/MM/yyyy HH:mm' }}</td>
                 <td class="droite"><strong>{{ nombre(p.quantite) }}</strong></td>
+                <td class="droite pieces">{{ pieces(p) }}</td>
               </tr>
             }
           </tbody>
         </table>
+        @if (a.pieces !== null && a.pieces !== undefined) {
+          <p class="pieces-sortie">Pièces qui sortent : <strong>{{ pieces(a) }}</strong></p>
+        }
       }
 
       <div class="modale-pied">

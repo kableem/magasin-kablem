@@ -118,7 +118,7 @@ async function placerPalette(connexion, palette, bobines) {
   const aPlacer = bobines.filter((b) => !b.range);
   if (!aPlacer.length) return null;
   const type = typePalette(palette) ?? aPlacer[0].type;
-  const { capaciteTampon, limites } = await parametresRangement(connexion);
+  const { capaciteTampon } = await parametresRangement(connexion);
   const enPlace = (await occupation(connexion, true)).filter((l) => l.emplacement);
   const entiere = (code, regle, motif) => ({
     mode: 'entiere', emplacement: code, places: aPlacer.map((b) => ({ bobine: b, emplacement: code, regle, motif })),
@@ -140,16 +140,16 @@ async function placerPalette(connexion, palette, bobines) {
     id: 0, type, taille_bobine: type === 'bobine' ? 'grande' : null, type_cosse: type === 'cosse' ? 'plat' : null, palette_entiere: true,
     reference: dominante.reference, lot: dominante.lot, quantite: 1, date_reception: '',
   };
-  const [vide] = R.proposerPlan([palettePleine], enPlace, { capaciteTampon: 0, limites });
+  const [vide] = R.proposerPlan([palettePleine], enPlace, { capaciteTampon: 0 });
   if (vide?.emplacement) return entiere(vide.emplacement, vide.regle, `Emplacement vide : ${vide.motif.charAt(0).toLowerCase()}${vide.motif.slice(1)}`);
 
   // 2. Colis par colis dans les rayonnages : palettes commencées (règles 1 à 3), selon la place qui reste
-  const rayon = repartir(aPlacer, R.proposerPlan(lignesDe(aPlacer), enPlace, { capaciteTampon: 0, limites }));
+  const rayon = repartir(aPlacer, R.proposerPlan(lignesDe(aPlacer), enPlace, { capaciteTampon: 0 }));
   if (!rayon.reste.length) return { mode: 'divisee', emplacement: null, places: rayon.places };
 
   // 3. Rien en rayon : la palette entière sur une place vide de la zone tampon
   if (rayon.reste.length === aPlacer.length) {
-    const [tampon] = R.proposerPlan([palettePleine], enPlace, { capaciteTampon, limites });
+    const [tampon] = R.proposerPlan([palettePleine], enPlace, { capaciteTampon });
     if (tampon?.emplacement && R.estTampon(tampon.emplacement)) {
       return entiere(tampon.emplacement, 6, `Zone tampon : plus d'emplacement vide ${type === 'cosse' ? 'aux niveaux 1 et 2' : 'au niveau 0'}`);
     }
@@ -157,7 +157,7 @@ async function placerPalette(connexion, palette, bobines) {
 
   // 4. Le reste colis par colis en zone tampon (place commencée compatible, sinon vide)
   const dejaPlaces = rayon.places.map((p) => ({ ...p.bobine, quantite: 1, emplacement: p.emplacement }));
-  const tampon = repartir(rayon.reste, R.proposerPlan(lignesDe(rayon.reste), [...enPlace, ...dejaPlaces], { capaciteTampon, limites }));
+  const tampon = repartir(rayon.reste, R.proposerPlan(lignesDe(rayon.reste), [...enPlace, ...dejaPlaces], { capaciteTampon }));
   if (tampon.reste.length) return null;
   return { mode: 'divisee', emplacement: null, places: [...rayon.places, ...tampon.places] };
 }

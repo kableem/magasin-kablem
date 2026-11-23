@@ -3,43 +3,42 @@ const db = require('../db');
 const R = require('../rangement');
 const { lignesEnStock, placesReservees } = require('./stock');
 const { parametresRangement, delaiReclamation } = require('../parametres');
+const { avecNumeros } = require('../plan');
+const { DUREE_MAX_MINUTES } = require('../reservations');
+
+// « 35 min », « 2 h 05 »
+const duree = (minutes) => (minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`);
 
 const router = express.Router();
 
 // Seuils des alertes
 const SEUIL_ALERTE = 0.8; // 80 % : attention
 const SEUIL_CRITIQUE = 0.9; // 90 % : critique
-const SEUIL_PLEIN_CONNECTEUR = 0.95; // une palette de connecteurs est « pleine » à 95 % (volume ou poids)
 
 const ZONES = [
-  { cle: 'bobines', libelle: 'Bobines', detail: 'Niveau 0', niveaux: [0] },
-  { cle: 'cosses', libelle: 'Cosses', detail: 'Niveaux 1 et 2', niveaux: [1, 2] },
-  { cle: 'connecteurs', libelle: 'Connecteurs', detail: 'Niveaux 3 et 4', niveaux: [3, 4] },
+  { cle: 'bobines', type: 'bobine', libelle: 'Bobines', detail: 'Niveau 0, blocs A à D', niveaux: [0] },
+  { cle: 'cosses', type: 'cosse', libelle: 'Cosses séparées', detail: 'Niveaux 1 et 2 (1 à 3 du bloc E)', niveaux: [1, 2, 3] },
+  { cle: 'connecteurs', type: 'connecteur', libelle: 'Connecteurs et cartons de cosses', detail: 'Niveaux 3 et 4 (4 et 5 du bloc E)', niveaux: [3, 4, 5] },
 ];
 
 // Taux de remplissage d'une palette (0 à 1) : nombre de produits / capacité ;
-// connecteurs : le plus rempli du volume et du poids (plein à 95 %)
-function tauxPalette(code, lignes, limites) {
+// connecteurs (provisoire, sans volume ni poids) : un emplacement occupé est plein
+function tauxPalette(code, lignes) {
   if (!lignes.length) return 0;
+  if (lignes.some((l) => l.palette_cosses_id)) return 1; // une palette de cosses occupe tout l'emplacement
   const premiere = lignes[0];
-  if (premiere.type === 'connecteur') {
-    const lim = R.limitesPalette(code, limites);
-    const volume = lignes.reduce((s, l) => s + R.volumeCarton(l) * l.quantite, 0);
-    const poids = lignes.reduce((s, l) => s + Number(l.poids) * l.quantite, 0);
-    const taux = Math.max(volume / lim.volumeMax, poids / lim.poidsMax);
-    return taux >= SEUIL_PLEIN_CONNECTEUR ? 1 : Math.min(taux, 1);
-  }
+  if (premiere.type === 'connecteur') return 1;
   const n = lignes.reduce((s, l) => s + l.quantite, 0);
   return Math.min(n / R.capacite(premiere), 1);
 }
 
 // Résumé d'un ensemble d'emplacements : libres, partiels, pleins, taux d'utilisation de la capacité
-function resumer(codes, parPlace, limites) {
+function resumer(codes, parPlace) {
   const r = { total: codes.length, libres: 0, partiels: 0, pleins: 0, produits: 0, taux: 0 };
   let somme = 0;
   for (const code of codes) {
     const lignes = parPlace.get(code) ?? [];
-    const taux = tauxPalette(code, lignes, limites);
+    const taux = tauxPalette(code, lignes);
     somme += taux;
     r.produits += lignes.reduce((s, l) => s + l.quantite, 0);
     if (!lignes.length) r.libres++;
@@ -54,7 +53,7 @@ function resumer(codes, parPlace, limites) {
 // GET /api/tableau-de-bord : remplissage, alertes, activité, réclamations
 router.get('/', async (req, res, next) => {
   try {
-    const { capaciteTampon, limites } = await parametresRangement();
+    const { capaciteTampon } = await parametresRangement();
     const stock = await lignesEnStock();
     const parPlace = new Map();
     for (const l of stock) if (l.emplacement) parPlace.set(l.emplacement, [...(parPlace.get(l.emplacement) ?? []), l]);
@@ -62,11 +61,13 @@ router.get('/', async (req, res, next) => {
     // ---------- Remplissage ----------
     const remplissage = ZONES.map((z) => ({
       ...z,
-      ...resumer(z.niveaux.flatMap((n) => R.emplacementsParProximite(n)), parPlace, limites),
+      // par type de place : bobines = blocs A à D (le niveau 0 des blocs E à H = bobines WIP, non géré), places bloquées exclues,
+      // bloc E : le niveau 3 compte avec les cosses séparées
+      ...resumer(R.emplacementsDuType(z.type), parPlace),
     }));
     const tampon = {
       cle: 'tampon', libelle: 'Zone tampon', detail: `${capaciteTampon} places au sol`,
-      ...resumer(R.placesTampon(capaciteTampon), parPlace, limites),
+      ...resumer(R.placesTampon(capaciteTampon), parPlace),
     };
     // Pour la zone tampon, ce qui compte est le nombre de places occupées
     tampon.taux = capaciteTampon ? Math.round((1000 * tampon.places_occupees) / capaciteTampon) / 10 : 0;
@@ -91,7 +92,7 @@ router.get('/', async (req, res, next) => {
       const produits = produitsAttente
         .filter((p) => p.import_id === i.id && p.quantite > 0)
         .map((p) => ({ ...p, longueur: p.longueur && Number(p.longueur), largeur: p.largeur && Number(p.largeur), hauteur: p.hauteur && Number(p.hauteur), poids: p.poids && Number(p.poids) }));
-      const plan = produits.length ? R.proposerPlan(produits, enPlace, { capaciteTampon, limites }) : [];
+      const plan = produits.length ? R.proposerPlan(produits, enPlace, { capaciteTampon }) : [];
       return {
         ...i,
         sans_place: plan.filter((p) => !p.emplacement).reduce((s, p) => s + p.quantite, 0),
@@ -117,6 +118,25 @@ router.get('/', async (req, res, next) => {
     if (tampon.produits) {
       alertes.push({ niveau: 'info', message: `${tampon.produits} produit(s) en zone tampon : « Ranger automatiquement » dès qu'une place se libère`, lien: '/stock' });
     }
+    // Sorties urgentes : colis posé près de la porte mais pas encore sorti vers la production (en tête des alertes).
+    // Après la durée d'une sortie préparée (2 h), le colis n'est plus réservé : il est devenu du stock normal.
+    const [urgences] = await db.query(
+      `SELECT u.colis, u.reference, u.destination, u.emplacement, m.matricule AS par, TIMESTAMPDIFF(MINUTE, u.date_posee, NOW()) AS minutes
+       FROM sorties_urgentes u LEFT JOIN utilisateurs m ON m.id = u.utilisateur_id
+       WHERE u.statut = 'posee' ORDER BY u.date_posee`
+    );
+    alertes.unshift(...urgences.map((u) => {
+      const minutes = Math.max(0, Number(u.minutes));
+      const vieux = minutes >= DUREE_MAX_MINUTES;
+      return {
+        niveau: vieux ? 'critique' : 'attention',
+        message: avecNumeros(
+          `Sortie urgente pas terminée : ${u.reference} colis n° ${u.colis} posé en ${u.emplacement} depuis ${duree(minutes)}, pas encore sorti vers ${u.destination}` +
+          ` (magasinier ${u.par ?? '?'}).${vieux ? ' Il n’est plus réservé : sortez-le ou rangez-le.' : ''}`
+        ),
+        lien: '/import',
+      };
+    }));
     // Réclamations non réglées depuis plus de N jours
     const delai = await delaiReclamation();
     const [[suivi]] = await db.query(

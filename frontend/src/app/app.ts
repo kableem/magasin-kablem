@@ -1,7 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
-import { AuthService, estPlanificateur, peutGererMagasin } from './services/auth';
+import { AuthService, peutGererMagasin } from './services/auth';
 import { LIBELLES_ROLES } from './services/utilisateur';
 import { ToastService } from './services/toast';
 
@@ -30,7 +30,6 @@ export class App {
   protected readonly estAdmin = computed(() => this.auth.utilisateur()?.role === 'admin');
   // Tableau de bord : administrateur et chef de magasin
   protected readonly peutGerer = computed(() => peutGererMagasin(this.auth.utilisateur()));
-  protected readonly planificateur = computed(() => estPlanificateur(this.auth.utilisateur()));
   protected readonly lienTableau: LienMenu = {
     chemin: '/tableau-de-bord',
     libelle: 'Tableau de bord',
@@ -72,12 +71,14 @@ export class App {
     },
   ];
 
+  // Catalogue des articles : administrateur et chef de magasin
+  protected readonly lienArticles: LienMenu = {
+    chemin: '/articles',
+    libelle: 'Articles',
+    icone: 'M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6H6v-2h12v2zm-4 4H6v-2h8v2z',
+  };
+
   protected readonly liensAdmin: LienMenu[] = [
-    {
-      chemin: '/articles',
-      libelle: 'Articles',
-      icone: 'M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6H6v-2h12v2zm-4 4H6v-2h8v2z',
-    },
     {
       chemin: '/utilisateurs',
       libelle: 'Utilisateurs',

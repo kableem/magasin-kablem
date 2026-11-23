@@ -85,8 +85,13 @@ export class Login implements OnInit, OnDestroy {
     this.majActive.set(event.getModifierState?.('CapsLock') ?? false);
   }
 
-  connexion(): void {
+  connexion(formulaire?: HTMLFormElement): void {
     if (this.chargement()) return;
+    // Champs remplis par le navigateur (mot de passe enregistré) : Chrome ne prévient pas toujours l'application,
+    // on lit donc aussi ce qui est réellement écrit dans les champs
+    const champ = (nom: string) => (formulaire?.elements.namedItem(nom) as HTMLInputElement | null)?.value ?? '';
+    if (!this.matricule.trim()) this.matricule = champ('matricule');
+    if (!this.motDePasse) this.motDePasse = champ('motDePasse');
     if (!this.matricule.trim() || !this.motDePasse) {
       this.afficherErreur('Veuillez saisir votre matricule et votre mot de passe.');
       return;

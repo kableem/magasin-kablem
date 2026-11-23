@@ -45,4 +45,44 @@ async function pdfEtiquettesTampon(codes, sortie) {
   doc.end();
 }
 
-module.exports = { pdfEtiquettesTampon };
+// Étiquettes de cartons de cosses, au format des tickets verts (115 × 75 mm, une étiquette par page).
+// QR : « référence;lot;pièces;JJ/MM/AAAA HH:MM:SS.mmm » (date système de la 1re impression : QR unique).
+const MM = 72 / 25.4;
+async function pdfEtiquettesCartons(cartons, sortie) {
+  const L = 115 * MM;
+  const H = 75 * MM;
+  const doc = new PDFDocument({ size: [L, H], margin: 0, autoFirstPage: false, info: { Title: 'Étiquettes de cartons', Author: 'Kab-lem Tunisia' } });
+  // Impression en taille réelle par défaut (pas « Ajuster à la page », qui agrandit l'étiquette)
+  doc._root.data.ViewerPreferences = doc.ref({ PrintScaling: 'None' });
+  doc.pipe(sortie);
+  for (const c of cartons) {
+    doc.addPage({ size: [L, H], margin: 0 });
+    const m = 4 * MM;
+    const cote = 32 * MM; // QR de 32 mm : bien lu par le téléphone, sans prendre toute l'étiquette
+    const png = await QRCode.toBuffer(c.qr, { errorCorrectionLevel: 'M', margin: 1, scale: 10 });
+    doc.image(png, m, m, { width: cote, height: cote });
+    doc.fillColor('#111111').font('Helvetica').fontSize(6).text(c.qr, m, m + cote + 1.5 * MM, { width: cote, align: 'center' });
+    // Texte à droite du QR
+    const x = m + cote + 4 * MM;
+    const l = L - x - m;
+    let y = m;
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(`CARTON N° ${c.numero}`, x, y, { width: l });
+    y += 6.5 * MM;
+    const ligne = (titre, valeur, taille = 13) => {
+      doc.font('Helvetica').fontSize(7).fillColor('#444444').text(titre, x, y, { width: l });
+      y += 3 * MM;
+      doc.font('Helvetica-Bold').fontSize(taille).fillColor('#111111').text(valeur, x, y, { width: l });
+      y += taille + 4; // hauteur du texte, puis un petit espace
+    };
+    ligne('Codice Articolo', c.reference, 16);
+    ligne('Lotto', c.lot, 11);
+    ligne('Contenu', `${c.cosses} cosse${c.cosses > 1 ? 's' : ''}`, 12);
+    ligne('Pièces', String(c.pieces).replace(/\B(?=(\d{3})+(?!\d))/g, ' '), 12); // « 15 000 »
+    ligne('Imprimé le', c.date_etiquette, 9);
+    doc.font('Helvetica').fontSize(6.5).fillColor('#444444')
+      .text(`Import ${c.numero_livraison ?? 'n° ' + c.import_id}`, x, H - m - 3 * MM, { width: l });
+  }
+  doc.end();
+}
+
+module.exports = { pdfEtiquettesTampon, pdfEtiquettesCartons };

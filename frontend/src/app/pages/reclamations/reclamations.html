@@ -26,6 +26,9 @@
     <button type="button" class="carte-motif" [attr.data-motif]="m.valeur" [class.actif]="filtreMotif() === m.valeur" (click)="filtrerMotif(m.valeur)">
       <span class="nom">{{ m.libelle }}</span>
       <strong>{{ nombre(m.quantite) }}</strong>
+      @if (m.pieces) {
+        <small class="pieces-motif">+ {{ nombre(m.pieces) }} pièces (import par référence)</small>
+      }
       <small>{{ m.aide }}</small>
       
 
@@ -146,8 +149,8 @@
               <td><span class="badge-type" [attr.data-type]="p.type">{{ libelle(p) }}</span></td>
               <td class="code ref">{{ p.reference }}</td>
               <td class="code">{{ p.lot }}</td>
-              <td class="droite">{{ nombre(p.quantite_annoncee) }}</td>
-              <td class="droite"><strong>{{ nombre(p.quantite) }}</strong></td>
+              <td class="droite">{{ nombre(p.quantite_annoncee) }}{{ p.unite === 'pieces' ? ' pièces' : '' }}</td>
+              <td class="droite"><strong>{{ nombre(p.quantite) }}</strong>{{ p.unite === 'pieces' ? ' pièces' : '' }}</td>
               <td><span class="motif" [attr.data-motif]="p.motif">{{ libelleMotif(p.motif) }}</span></td>
               <td class="commentaire">{{ p.commentaire || '—' }}</td>
               <td class="date">{{ p.par || '—' }}<br /><small>{{ p.date_reclamation | date: 'dd/MM/yyyy HH:mm' }}</small></td>
@@ -218,7 +221,7 @@
         </button>
       </div>
       <p class="produit-suivi">
-        <span class="code ref">{{ p.reference }}</span> · lot <span class="code">{{ p.lot }}</span> · {{ p.quantite }} réclamé(s) ·
+        <span class="code ref">{{ p.reference }}</span> · lot <span class="code">{{ p.lot }}</span> · {{ nombre(p.quantite) }} {{ p.unite === 'pieces' ? 'pièces réclamées' : 'réclamé(s)' }} ·
         <span class="motif" [attr.data-motif]="p.motif">{{ libelleMotif(p.motif) }}</span>
       </p>
       @if (erreurSuivi()) {

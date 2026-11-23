@@ -4,11 +4,17 @@
   "private": true,
   "scripts": {
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix mobile",
+    "base": "node backend/scripts/creer-base.js",
     "base:restaurer": "node backend/scripts/restaurer-base.js",
-    "build": "npm run build --prefix frontend && npm run build --prefix mobile",
-    "start": "npm start --prefix backend",
+    "base:exporter": "node backend/scripts/exporter-base.js",
     "dev": "concurrently -n API,ANGULAR -c blue,red \"npm run dev --prefix backend\" \"npm start --prefix frontend\"",
-    "tout": "concurrently -n API,WEB,MOBILE -c blue,red,green \"npm run dev --prefix backend\" \"npm start --prefix frontend\" \"npm start --prefix mobile\""
+    "tout": "concurrently -n API,WEB,MOBILE -c blue,red,green \"npm run dev --prefix backend\" \"npm start --prefix frontend\" \"npm start --prefix mobile\"",
+    "backend": "npm run dev --prefix backend",
+    "frontend": "npm start --prefix frontend",
+    "mobile": "npm start --prefix mobile",
+    "test": "npm test --prefix backend",
+    "build": "npm run build --prefix frontend && npm run build --prefix mobile",
+    "serveur": "npm start --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

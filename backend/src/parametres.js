@@ -1,6 +1,5 @@
 // Lecture des paramètres de l'application (table « parametres »)
 const db = require('./db');
-const { LIMITES_CONNECTEUR_DEFAUT } = require('./rangement');
 
 const TAMPON_DEFAUT = 20;
 
@@ -8,18 +7,6 @@ async function capaciteTampon(connexion = db) {
   const [[ligne]] = await connexion.query("SELECT valeur FROM parametres WHERE cle = 'tampon_capacite'");
   const n = Number(ligne?.valeur);
   return Number.isInteger(n) && n >= 0 ? n : TAMPON_DEFAUT;
-}
-
-// Limites d'une palette de connecteurs : clés « connecteur_<nom> », valeur par défaut sinon
-async function limitesConnecteurs(connexion = db) {
-  const [lignes] = await connexion.query("SELECT cle, valeur FROM parametres WHERE cle LIKE 'connecteur\\_%'");
-  const limites = { ...LIMITES_CONNECTEUR_DEFAUT };
-  for (const { cle, valeur } of lignes) {
-    const nom = cle.slice('connecteur_'.length);
-    const n = Number(valeur);
-    if (nom in limites && Number.isFinite(n) && n > 0) limites[nom] = n;
-  }
-  return limites;
 }
 
 // Délai (jours) au-delà duquel une réclamation non réglée est en retard
@@ -30,9 +17,26 @@ async function delaiReclamation(connexion = db) {
   return Number.isInteger(n) && n >= 1 ? n : DELAI_RECLAMATION_DEFAUT;
 }
 
-// Tout ce dont le moteur de rangement a besoin
-async function parametresRangement(connexion = db) {
-  return { capaciteTampon: await capaciteTampon(connexion), limites: await limitesConnecteurs(connexion) };
+// Import résumé : plus de tolérance (décision du 2026-11-06) : tout écart de pièces devient une réclamation
+const TOLERANCE_PIECES_DEFAUT = 0;
+async function tolerancePieces() {
+  return TOLERANCE_PIECES_DEFAUT;
 }
 
-module.exports = { capaciteTampon, limitesConnecteurs, parametresRangement, delaiReclamation, TAMPON_DEFAUT };
+// Déroulement de la réception mobile :
+//   'separee' (par défaut) : 1) Réception : contrôle des produits, lots et écarts, sans emplacement ;
+//                            2) Rangement : une fois la réception validée, chaque produit est rescanné puis
+//                               posé sur son emplacement (page Rangement du mobile).
+//   'palette' : ancienne réception palette par palette, rangée pendant la réception.
+const MODES_RECEPTION = ['separee', 'palette'];
+async function modeReception(connexion = db) {
+  const [[ligne]] = await connexion.query("SELECT valeur FROM parametres WHERE cle = 'reception_mode'");
+  return MODES_RECEPTION.includes(ligne?.valeur) ? ligne.valeur : 'separee';
+}
+
+// Tout ce dont le moteur de rangement a besoin
+async function parametresRangement(connexion = db) {
+  return { capaciteTampon: await capaciteTampon(connexion) };
+}
+
+module.exports = { capaciteTampon, parametresRangement, delaiReclamation, tolerancePieces, modeReception, MODES_RECEPTION, TAMPON_DEFAUT, TOLERANCE_PIECES_DEFAUT };

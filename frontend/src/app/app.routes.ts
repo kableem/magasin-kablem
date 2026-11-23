@@ -11,7 +11,7 @@ import { inject } from '@angular/core';
 import { AuthService } from './services/auth';
 import { TableauDeBordPage } from './pages/tableau-de-bord/tableau-de-bord';
 import { Journal } from './pages/journal/journal';
-import { adminGuard, articlesGuard, authGuard, gestionnaireGuard, inviteGuard, magasinGuard, pageAccueil } from './guards/auth-guard';
+import { adminGuard, authGuard, gestionnaireGuard, inviteGuard, pageAccueil } from './guards/auth-guard';
 
 export const routes: Routes = [
   { path: '', redirectTo: () => pageAccueil(inject(AuthService)).slice(1), pathMatch: 'full' },
@@ -22,10 +22,10 @@ export const routes: Routes = [
     title: 'Tableau de bord · Magasin Kablem',
   },
   { path: 'login', component: Login, canActivate: [inviteGuard], title: 'Connexion · Magasin Kablem' },
-  { path: 'stock', component: Stock, canActivate: [authGuard, magasinGuard], title: 'Gestion de stock · Magasin Kablem' },
-  { path: 'import', component: Import, canActivate: [authGuard, magasinGuard], title: 'Import · Magasin Kablem' },
-  { path: 'export', component: Export, canActivate: [authGuard, magasinGuard], title: 'Export · Magasin Kablem' },
-  { path: 'reclamations', component: Reclamations, canActivate: [authGuard, magasinGuard], title: 'Réclamations · Magasin Kablem' },
+  { path: 'stock', component: Stock, canActivate: [authGuard], title: 'Gestion de stock · Magasin Kablem' },
+  { path: 'import', component: Import, canActivate: [authGuard], title: 'Import · Magasin Kablem' },
+  { path: 'export', component: Export, canActivate: [authGuard], title: 'Export · Magasin Kablem' },
+  { path: 'reclamations', component: Reclamations, canActivate: [authGuard], title: 'Réclamations · Magasin Kablem' },
   {
     path: 'journal',
     component: Journal,
@@ -33,7 +33,7 @@ export const routes: Routes = [
     title: 'Journal des alertes · Magasin Kablem',
   },
   // Plan du magasin (blocs A à H, numéros des étiquettes) ; l'ancienne page d'essai renvoie ici
-  { path: 'emplacements', component: EmplacementTest, canActivate: [authGuard, magasinGuard], title: 'Emplacements · Magasin Kablem' },
+  { path: 'emplacements', component: EmplacementTest, canActivate: [authGuard], title: 'Emplacements · Magasin Kablem' },
   { path: 'emplacement-test', redirectTo: 'emplacements' },
   {
     path: 'utilisateurs',
@@ -44,7 +44,7 @@ export const routes: Routes = [
   {
     path: 'articles',
     component: Articles,
-    canActivate: [authGuard, articlesGuard],
+    canActivate: [authGuard, gestionnaireGuard], // catalogue des articles : administrateur et chef de magasin
     title: 'Articles · Magasin Kablem',
   },
   { path: 'produits', redirectTo: 'stock' },

@@ -9,6 +9,7 @@
 //   GET  /api/mobile/ranger/emplacement/:code    contenu d'un emplacement (lecture seule)
 //   POST /api/mobile/ranger/deplacer             { uuid, qr, depuis, vers }  un produit (un colis)
 //   POST /api/mobile/ranger/palette              { uuid, depuis, vers }      toute la palette, sur un emplacement vide
+//   POST /api/mobile/ranger/cartons              { uuid, cartons: [qr], vers } un ou plusieurs cartons de cosses (voir src/deplacer-cartons.js)
 //   GET  /api/mobile/ranger/mes-deplacements     mes déplacements du jour
 const express = require('express');
 const db = require('../db');
@@ -18,6 +19,9 @@ const { parametresRangement, capaciteTampon } = require('../parametres');
 const { enregistrerMouvements } = require('../historique');
 const { lireTicket, lireEmplacement, lotsDuTicket, messageIllisible } = require('../ticket');
 const { enregistrer, operation } = require('./mobile').outils;
+const C = require('../cartons');
+const P = require('../palettes-cosses');
+const K = require('../deplacer-cartons');
 
 const router = express.Router();
 const refus = (status, message) => Object.assign(new Error(message), { status });
@@ -27,11 +31,12 @@ const nombre = (v) => (v === null || v === undefined ? null : Number(v));
 async function contenuDe(connexion, code, verrou = false) {
   const [lignes] = await connexion.query(
     `SELECT r.id, r.type, r.taille_bobine, r.type_cosse, r.reference, r.lot, r.longueur, r.largeur, r.hauteur, r.poids,
-            p.id AS placement_id, p.quantite
-     FROM placements p JOIN receptions r ON r.id = p.reception_id
+            p.id AS placement_id, p.quantite, p.carton_id, ca.numero AS carton_numero, p.palette_cosses_id, pc.numero AS palette_numero
+     FROM placements p JOIN receptions r ON r.id = p.reception_id LEFT JOIN cartons ca ON ca.id = p.carton_id
+     LEFT JOIN palettes_cosses pc ON pc.id = p.palette_cosses_id
      WHERE p.emplacement = ? AND p.quantite > 0
      ORDER BY r.reference, r.lot, r.id
-     ${verrou ? 'FOR UPDATE' : ''}`,
+     ${verrou ? 'FOR UPDATE OF p, r' : ''}`,
     [code]
   );
   return lignes.map((l) => ({
@@ -44,6 +49,9 @@ async function contenuDe(connexion, code, verrou = false) {
 function remplissage(lignes) {
   const n = lignes.reduce((t, l) => t + Number(l.quantite), 0);
   if (!n) return { n: 0, capacite: null, libelle: 'vide' };
+  // palette de cosses (cartons et cosses séparées) : elle occupe tout l'emplacement, rien ne s'y ajoute
+  const palette = lignes.find((l) => l.palette_cosses_id);
+  if (palette) return { n, capacite: n, palette: palette.palette_numero, libelle: `palette de cosses n° ${palette.palette_numero} · ${n} cosse${n > 1 ? 's' : ''} (plein)` };
   const premier = lignes[0];
   if (premier.type === 'connecteur') return { n, capacite: null, libelle: `${n} carton${n > 1 ? 's' : ''}` };
   if (premier.type === 'cosse') {
@@ -93,7 +101,7 @@ async function colisSorti(connexion, cle) {
 // La destination peut-elle recevoir ces produits (règles du magasin, stock et places réservées) ?
 // Les produits déplacés quittent d'abord leur place de départ. Renvoie le refus en clair, ou null.
 async function refusDestination(connexion, produits, vers, retirer) {
-  const { capaciteTampon: capacite, limites } = await parametresRangement(connexion);
+  const { capaciteTampon: capacite } = await parametresRangement(connexion);
   const etat = (await occupation(connexion, true))
     .filter((l) => l.emplacement)
     .map((l) => {
@@ -101,7 +109,7 @@ async function refusDestination(connexion, produits, vers, retirer) {
       return retire ? { ...l, quantite: Number(l.quantite) - retire } : l;
     })
     .filter((l) => Number(l.quantite) > 0);
-  return R.verifierPlan(produits.map((p) => ({ id: p.id, emplacement: vers, quantite: p.quantite })), produits, etat, capacite, limites);
+  return R.verifierPlan(produits.map((p) => ({ id: p.id, emplacement: vers, quantite: p.quantite })), produits, etat, capacite);
 }
 
 async function deplacer(connexion, ligne, depuis, vers, quantite) {
@@ -113,6 +121,22 @@ async function deplacer(connexion, ligne, depuis, vers, quantite) {
 // GET /produit?qr= : où se trouve ce produit, pour guider le scan de son emplacement
 router.get('/produit', async (req, res, next) => {
   try {
+    // Étiquette d'un carton : le carton se déplace (seul ou avec d'autres), ou toute sa palette (« Toute la palette »)
+    const carton = await K.cartonDuQr(db, req.query.qr);
+    if (carton) {
+      if (carton.inconnu) return res.status(404).json({ message: 'Étiquette de carton inconnue.' });
+      const etat = await K.etatCarton(db, carton);
+      if (etat.refus) return res.status(409).json({ message: etat.refus });
+      const [[p]] = await db.query(`${P.SELECT_PALETTE} WHERE p.id = ?`, [carton.palette_id]);
+      const vue = await P.vuePalette(db, p);
+      return res.json({
+        reference: carton.reference, lot: carton.lot, colis: carton.connecteur ? carton.numero : null,
+        type: carton.connecteur ? 'connecteur' : 'cosse', taille_bobine: null, type_cosse: carton.connecteur ? null : 'plat',
+        emplacements: [{ code: carton.emplacement, quantite: etat.restantes.length }], ici: carton.emplacement,
+        carton: { id: carton.id, numero: carton.numero, cosses: etat.restantes.length, qr: String(req.query.qr).trim() },
+        palette: { id: vue.id, numero: vue.numero, cosses: vue.en_stock, cartons: vue.cartons.filter((c) => c.en_stock > 0).length, separees: vue.nb_separees },
+      });
+    }
     const ticket = lireTicket(req.query.qr);
     if (!ticket) return res.status(400).json({ message: messageIllisible(req.query.qr) });
     const [places] = await db.query(
@@ -187,6 +211,13 @@ router.post('/deplacer', operation('ranger', async (connexion, req) => {
       ...trajet, message: `${ticket.reference} lot ${ticket.lot} n'est pas en ${depuis} : prenez un produit posé à cet emplacement. Rien n'est enregistré.`,
     });
   }
+  if (ligne.palette_cosses_id) {
+    return refuser(connexion, req, {
+      ...trajet, ligne, message: ligne.type === 'connecteur'
+        ? `Ce connecteur est sur la palette n° ${ligne.palette_numero} et n'est pas passé par la réception sur le téléphone : déplacez toute la palette (« Toute la palette »). Rien n'est enregistré.`
+        : `Cette cosse est sur la palette de cosses n° ${ligne.palette_numero} : la palette se déplace en entier (« Palette entière »). Une cosse n'en sort que par l'export. Rien n'est enregistré.`,
+    });
+  }
   const erreur = await refusDestination(connexion, [{ ...ligne, quantite: 1 }], vers, new Map([[ligne.placement_id, 1]]));
   if (erreur) return refuser(connexion, req, { ...trajet, ligne, message: `${erreur.replace(/\.$/, '')}. Rien n'est enregistré.` });
 
@@ -224,6 +255,15 @@ router.post('/palette', operation('ranger', async (connexion, req) => {
   const contenu = await contenuDe(connexion, depuis, true);
   if (!contenu.length) return refuser(connexion, req, { ...trajet, message: `${depuis} est vide : rien à déplacer.` });
   const premier = { ...trajet, reference: contenu[0].reference, lot: contenu[0].lot, ligne: contenu[0] };
+  if (contenu.some((l) => l.palette_cosses_id)) {
+    const [[desc]] = await connexion.query('SELECT 1 AS oui FROM palettes_cosses WHERE id IN (?) AND descendue_par IS NOT NULL LIMIT 1', [contenu.map((l) => l.palette_cosses_id ?? 0)]);
+    if (desc) return refuser(connexion, req, { ...premier, message: `La palette de ${depuis} est descendue pour être complétée : elle ne se déplace pas avant d'être remise à sa place. Rien n'est enregistré.` });
+    // palette de cartons : pas pendant une sortie qui passe par elle, ni avant la descente d'un carton ouvert
+    const sortie = await K.sortieSurLeParcours(connexion, depuis, contenu.map((l) => l.id));
+    if (sortie) return refuser(connexion, req, { ...premier, message: `La palette en ${depuis} est sur le parcours d'une sortie en cours (${sortie.quantite} × ${sortie.reference}) : attendez la fin ou l'annulation de cette sortie. Rien n'est enregistré.` });
+    const [[descente]] = await connexion.query("SELECT id FROM descentes_carton WHERE depuis = ? AND statut = 'en_cours' LIMIT 1", [depuis]);
+    if (descente) return refuser(connexion, req, { ...premier, message: "Un carton ouvert de cette palette attend sa descente : descendez d'abord ses cosses (écran Export). Rien n'est enregistré." });
+  }
   // 1 emplacement = 1 palette : la palette entière ne va que sur un emplacement vide (ni stock, ni place réservée)
   const occupeVers = (await occupation(connexion, true)).filter((l) => l.emplacement === vers && Number(l.quantite) > 0);
   if (occupeVers.length) {
@@ -235,7 +275,10 @@ router.post('/palette', operation('ranger', async (connexion, req) => {
   const erreur = await refusDestination(connexion, contenu, vers, new Map(contenu.map((l) => [l.placement_id, l.quantite])));
   if (erreur) return refuser(connexion, req, { ...premier, message: `${erreur.replace(/\.$/, '')}. Rien n'est enregistré.` });
 
-  for (const l of contenu) await deplacer(connexion, l, depuis, vers, l.quantite);
+  // tout l'emplacement change de place (vers est vide) : le carton éventuel le suit
+  await connexion.query('UPDATE placements SET emplacement = ? WHERE emplacement = ?', [vers, depuis]);
+  await connexion.query("UPDATE cartons SET emplacement = ? WHERE emplacement = ? AND statut = 'range'", [vers, depuis]);
+  await connexion.query("UPDATE palettes_cosses SET emplacement = ? WHERE emplacement = ? AND statut = 'rangee'", [vers, depuis]);
   await connexion.query(
     'UPDATE affectations_colis SET emplacement = ? WHERE emplacement = ? AND range_le IS NOT NULL AND reception_id IN (?)',
     [vers, depuis, contenu.map((l) => l.id)]
@@ -246,10 +289,55 @@ router.post('/palette', operation('ranger', async (connexion, req) => {
     commentaire: 'Palette entière', depuisLiberee: k === contenu.length - 1, utilisateurId: req.utilisateur.id,
   })));
   const plein = remplissage(contenu);
+  const paletteC = contenu.find((l) => l.palette_cosses_id);
   return enregistrer(connexion, req, 'ranger', 'deplace', {
     ...premier, quantite_ticket: plein.n,
-    message: `Palette entière ${depuis} → ${vers} (${plein.libelle}). ${depuis} est libre.`,
+    message: `${paletteC ? `Palette de cosses n° ${paletteC.palette_numero}` : 'Palette entière'} ${depuis} → ${vers} (${plein.libelle}). ${depuis} est libre.`,
     extra: { deplacement: { depuis, vers, depuis_libre: true, depuis_remplissage: remplissage([]), vers_remplissage: plein, palette: true } },
+  });
+}));
+
+// POST /cartons { uuid, cartons: [qr de l'étiquette de chaque carton], vers } : les cartons scannés, posés à l'arrivée
+router.post('/cartons', operation('ranger', async (connexion, req) => {
+  const qrs = [...new Set((Array.isArray(req.body.cartons) ? req.body.cartons : []).map((q) => String(q ?? '').trim()).filter(Boolean))];
+  if (!qrs.length) throw refus(400, 'Scannez au moins un carton.');
+  const vers = await codeDuMagasin(connexion, req.body.vers);
+  if (!vers) {
+    return enregistrer(connexion, req, 'ranger', 'emplacement_inconnu', {
+      emplacement_scanne: String(req.body.vers ?? '').trim().slice(0, 20) || null,
+      message: "Ce QR ne correspond à aucun emplacement du magasin. Rescannez l'étiquette.",
+    });
+  }
+  const cartons = [];
+  for (const qr of qrs) {
+    const k = await K.cartonDuQr(connexion, qr, true);
+    if (!k || k.inconnu) return refuser(connexion, req, { emplacement_scanne: vers, message: "Étiquette de carton inconnue : rescannez l'étiquette du carton. Rien n'est enregistré." });
+    if (cartons.some((c) => (k.connecteur ? c.k.cle === k.cle : c.k.id === k.id))) continue;
+    if (cartons.length && !!cartons[0].k.connecteur !== !!k.connecteur) {
+      return refuser(connexion, req, { emplacement_scanne: vers, message: 'Des cartons de cosses et des cartons de connecteurs ne se posent jamais ensemble : déplacez-les séparément. Rien n\'est enregistré.' });
+    }
+    const base = { reference: k.reference, lot: k.lot, carton_id: k.id, ticket: k.cle ?? null, emplacement_scanne: vers, emplacements_prevus: [{ code: k.emplacement }] };
+    const etat = await K.etatCarton(connexion, k);
+    if (etat.refus) return refuser(connexion, req, { ...base, message: `${etat.refus.replace(/\.$/, '')}. Rien n'est enregistré.` });
+    if (k.emplacement === vers) return refuser(connexion, req, { ...base, message: `${K.nomCarton(k)} est déjà en ${vers} : scannez l'emplacement où vous posez les cartons. Rien n'est enregistré.` });
+    cartons.push({ k, restantes: etat.restantes, base });
+  }
+  const arrivee = await K.arriveePourCartons(connexion, vers, cartons[0].k.connecteur ? 'connecteur' : 'cosse');
+  if (arrivee.refus) return refuser(connexion, req, { ...cartons[0].base, message: `${arrivee.refus.replace(/\.$/, '')}. Rien n'est enregistré.` });
+  const r = await K.deplacerCartons(connexion, cartons, vers, arrivee, req.utilisateur.id);
+  const departs = [...new Set(cartons.map((c) => c.k.emplacement))];
+  const plusieurs = cartons.length > 1 ? 's' : '';
+  return enregistrer(connexion, req, 'ranger', 'deplace', {
+    ...cartons[0].base, quantite_ticket: r.nbCosses, emplacements_prevus: departs.map((code) => ({ code })),
+    message: `${r.texte} posé${plusieurs} en ${vers} : ${r.palette.nouvelle ? `nouvelle palette n° ${r.palette.numero}` : `ajouté${plusieurs} à la palette n° ${r.palette.numero}`}.` +
+      (r.liberes.length ? ` ${r.liberes.join(', ')} ${r.liberes.length > 1 ? 'sont libres' : 'est libre'}.` : ''),
+    extra: {
+      deplacement: {
+        depuis: departs[0], vers, depuis_libre: r.liberes.includes(departs[0]), depuis_remplissage: remplissage(await contenuDe(connexion, departs[0])),
+        vers_remplissage: remplissage(await contenuDe(connexion, vers)), palette: false, cartons: cartons.map((c) => c.k.numero), places_liberees: r.liberes,
+        palette_arrivee: { numero: r.palette.numero, nouvelle: !!r.palette.nouvelle },
+      },
+    },
   });
 }));
 

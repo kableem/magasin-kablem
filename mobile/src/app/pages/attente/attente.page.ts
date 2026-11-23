@@ -31,12 +31,14 @@ import { EmplPipe } from '../../composants/empl.pipe';
             <li class="k-carte">
               <span class="type" [class.rangement]="o.controle === 'rangement'">{{ o.controle === 'reception' ? 'R' : 'G' }}</span>
               <div class="texte">
-                <b>{{ o.controle === 'reception' ? 'Réception' : 'Rangement' }}
+                <b>{{ o.libelle ?? (o.controle === 'reception' ? 'Réception' : 'Rangement') }}
                   @if (o.corps.emplacement) {
                     <span class="k-etiquette mini">{{ o.corps.emplacement | empl }}</span>
                   }
                 </b>
-                <small class="mono qr">{{ o.corps.qr }}</small>
+                @if (o.corps.qr) {
+                  <small class="mono qr">{{ o.corps.qr }}</small>
+                }
                 <small>
                   {{ o.date | date: 'dd/MM HH:mm:ss' }}
                   @if (o.corps.saisie_manuelle) {

@@ -2,16 +2,28 @@
 // Calcule, pour des imports, ce qui a été reçu, ce qui manque, ce qui est en trop ou hors import,
 // et ce qui est rangé. Un ticket de colis compte pour 1 produit ; un ticket par lot compte sa quantité.
 
+//
+// Import résumé (référence + total de pièces) : les lignes référence + lot naissent au scan, une par lot,
+// et comptent les colis reçus. Le contrôle se fait par référence, en pièces : attendus / recus / manquants
+// sont alors des pièces (ce que voit le magasinier) ; colis_recus et ranges restent des colis.
+const { tolerancePieces } = require('./parametres');
+const { bilanReference } = require('./import-resume');
+
 // Numéro du colis dans l'identifiant du ticket « F0391|202613167-1|10 » -> 10
 const numeroColis = (ticket) => (ticket ? Number(String(ticket).split('|').pop()) : null);
+// Écarts qui ne comptent qu'une fois la réception terminée (avant, c'est simplement « pas encore reçu »)
+const MANQUES = ['manquant', 'pieces_manquantes'];
+const anomaliesAffichees = (imp, av) => (imp.reception === 'terminee' ? av.anomalies : av.anomalies.filter((x) => !MANQUES.includes(x.type)));
 const trier = (liste) => [...new Set(liste)].filter((n) => Number.isFinite(n)).sort((x, y) => x - y);
 
 // Quantité attendue d'une ligne = annoncée par l'Italie - déjà réclamée (elle n'entre pas au stock)
 async function avancement(connexion, importIds) {
   const resultat = new Map(importIds.map((id) => [id, {
-    attendus: 0, recus: 0, en_trop: 0, manquants: 0, ranges: 0, hors_import: 0, lignes: new Map(), anomalies: [],
+    attendus: 0, recus: 0, en_trop: 0, manquants: 0, ranges: 0, hors_import: 0, colis_recus: 0, resume: false, lignes: new Map(), anomalies: [],
   }]));
   if (!importIds.length) return resultat;
+  const [modes] = await connexion.query("SELECT id FROM imports WHERE id IN (?) AND mode = 'resume'", [importIds]);
+  const resumes = new Set(modes.map((m) => m.id));
 
   const [lignes] = await connexion.query(
     `SELECT r.id, r.import_id, r.reference, r.lot, r.type, r.taille_bobine, r.type_cosse, r.quantite AS annoncee,
@@ -67,10 +79,12 @@ async function avancement(connexion, importIds) {
     a.lignes.set(l.id, ligne);
     a.attendus += attendue;
     a.recus += recus;
+    a.colis_recus += recus;
     a.en_trop += ligne.en_trop;
     a.manquants += ligne.manquants;
     a.ranges += ligne.ranges;
   }
+  if (resumes.size) await bilanPieces(connexion, resultat, [...resumes]);
   // Produits scannés pendant la réception de l'import mais absents de l'import
   const [hors] = await connexion.query(
     `SELECT import_id, reference, lot, COUNT(*) AS n FROM controles_mobile
@@ -84,6 +98,7 @@ async function avancement(connexion, importIds) {
     a.anomalies.push({ type: 'hors_import', reference: h.reference, lot: h.lot, quantite: Number(h.n) });
   }
   for (const a of resultat.values()) {
+    if (a.resume) continue; // import résumé : les écarts sont par référence, en pièces (bilanPieces)
     for (const l of a.lignes.values()) {
       if (l.manquants) a.anomalies.push({ type: 'manquant', reception_id: l.id, reference: l.reference, lot: l.lot, quantite: l.manquants });
       if (l.en_trop) a.anomalies.push({ type: 'en_trop', reception_id: l.id, reference: l.reference, lot: l.lot, quantite: l.en_trop });
@@ -92,9 +107,60 @@ async function avancement(connexion, importIds) {
   return resultat;
 }
 
+// Import résumé : pour chaque référence annoncée, pièces reçues (somme des tickets) / pièces annoncées,
+// colis et lots reçus, et bilan avec la tolérance. Les compteurs de l'import passent en pièces.
+async function bilanPieces(connexion, resultat, importIds) {
+  const pct = await tolerancePieces(connexion);
+  const [attendus] = await connexion.query(
+    'SELECT import_id, reference, type, taille_bobine, type_cosse, pieces FROM imports_attendus WHERE import_id IN (?) ORDER BY id',
+    [importIds]
+  );
+  const [recus] = await connexion.query(
+    // pièces de chaque colis : celles de son ticket
+    `SELECT r.import_id, UPPER(r.reference) AS reference, r.lot, COUNT(*) AS colis, COALESCE(SUM(c.pieces), 0) AS pieces
+     FROM controles_mobile c JOIN receptions r ON r.id = c.reception_id
+     WHERE r.import_id IN (?) AND c.controle = 'reception' AND c.resultat = 'conforme'
+     GROUP BY r.import_id, UPPER(r.reference), r.lot ORDER BY MIN(c.id)`,
+    [importIds]
+  );
+  for (const id of importIds) {
+    const a = resultat.get(id);
+    a.resume = true;
+    const references = attendus.filter((x) => x.import_id === id).map((x) => {
+      const lots = recus.filter((r) => r.import_id === id && r.reference === x.reference.toUpperCase());
+      const recues = lots.reduce((t, r) => t + Number(r.pieces), 0);
+      return {
+        reference: x.reference, type: x.type, taille_bobine: x.taille_bobine, type_cosse: x.type_cosse,
+        attendues: x.pieces, recues, colis: lots.reduce((t, r) => t + Number(r.colis), 0),
+        lots: lots.map((r) => ({ lot: r.lot, colis: Number(r.colis), pieces: Number(r.pieces) })),
+        ...bilanReference(x.pieces, recues, pct),
+      };
+    });
+    a.attendus = references.reduce((t, r) => t + r.attendues, 0);
+    a.recus = references.reduce((t, r) => t + Math.min(r.recues, r.attendues), 0);
+    a.manquants = a.attendus - a.recus;
+    a.pieces = {
+      tolerance_pct: pct,
+      attendues: a.attendus,
+      recues: references.reduce((t, r) => t + r.recues, 0),
+      en_trop: references.reduce((t, r) => t + Math.max(0, r.recues - r.attendues), 0),
+      // références hors tolérance : une réclamation sera créée à la fin de la réception
+      a_reclamer: references.filter((r) => r.statut === 'manquant' || r.statut === 'non_recue' || r.statut === 'en_trop').length,
+      references,
+    };
+    for (const r of references) {
+      if (!['manquant', 'non_recue', 'en_trop'].includes(r.statut)) continue;
+      a.anomalies.push({
+        type: r.statut === 'en_trop' ? 'pieces_en_trop' : 'pieces_manquantes', unite: 'pieces',
+        reference: r.reference, lot: null, quantite: Math.abs(r.ecart), attendues: r.attendues, recues: r.recues, colis: r.colis,
+      });
+    }
+  }
+}
+
 // Étape affichée d'un import (web et mobile)
 function etape(imp, av) {
-  if (imp.statut === 'ajoute') return av && av.recus > 0 && av.ranges >= av.recus ? 'range' : 'ajoute';
+  if (imp.statut === 'ajoute') return av && av.colis_recus > 0 && av.ranges >= av.colis_recus ? 'range' : 'ajoute';
   if (imp.reception === 'terminee') return imp.reception_ecarts > 0 ? 'a_valider' : 'receptionne';
   if (imp.reception === 'en_cours') return 'reception_en_cours';
   return 'en_attente';
@@ -103,4 +169,4 @@ function etape(imp, av) {
 // Pour le JSON : les lignes en tableau
 const versJson = (av) => av && { ...av, lignes: [...av.lignes.values()] };
 
-module.exports = { avancement, etape, versJson, numeroColis };
+module.exports = { avancement, etape, versJson, numeroColis, anomaliesAffichees, MANQUES };

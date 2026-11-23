@@ -1,16 +1,19 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { firstValueFrom } from 'rxjs';
+import { TimeoutError, firstValueFrom, timeout } from 'rxjs';
 import { api } from './config';
-import { ContenuEmplacement, ControleResume, FinReception, ImportReception, LigneProduit, ResultatControle, TypeControle, PaletteReception, EmplacementInventaire, InventaireValide, ProduitARanger, EmplacementARanger, MesDeplacements } from './modeles';
+import { CartonConsulte, ContenuEmplacement, ControleResume, FinReception, ImportReception, LigneProduit, ResultatControle, TypeControle, PaletteReception, ProduitARanger, EmplacementARanger, MesDeplacements } from './modeles';
 
 // Opération gardée sur le téléphone quand le réseau est coupé
 export interface OperationEnAttente {
   uuid: string;
   controle: TypeControle;
-  corps: { uuid: string; qr: string; emplacement?: string; import_id?: number; palette_id?: number; saisie_manuelle: boolean };
+  corps: { uuid: string; qr: string; emplacement?: string; import_id?: number; palette_id?: number; emballage?: 'carton' | 'separe'; saisie_manuelle: boolean };
   date: string;
   derniereErreur?: string;
+  // action de la réception gardée pendant une coupure (terminer le carton ou la palette ouverts) : son adresse et son nom
+  chemin?: string;
+  libelle?: string;
 }
 
 export type Envoi = { etat: 'fait'; resultat: ResultatControle } | { etat: 'en_attente'; operation: OperationEnAttente };
@@ -33,7 +36,11 @@ export function nouvelUuid(): string {
 // Serveur injoignable : pas de réseau (0), ou passerelle / relais sans réponse de l'API
 // (502, 503, 504, ou 500 sans message de l'API, renvoyé par le relais quand l'API est arrêtée)
 const injoignable = (e: HttpErrorResponse) =>
-  e.status === 0 || [502, 503, 504].includes(e.status) || (e.status >= 500 && !e.error?.message);
+  e instanceof TimeoutError || e.status === 0 || [502, 503, 504].includes(e.status) || (e.status >= 500 && !e.error?.message);
+
+// Scan de réception sans réponse au bout de ce délai : il est gardé sur le téléphone (Wi-Fi faible ou PC arrêté).
+// Il repart ensuite avec le même identifiant : le serveur ne l'enregistre jamais deux fois.
+const DELAI_RECEPTION_MS = 8000;
 
 const lire = <T>(cle: string, defaut: T): T => {
   try {
@@ -61,10 +68,11 @@ export class ControlesService {
 
   // Contrôle 1 : ticket scanné à la réception
   // importId : import en cours de réception (les colis sont rapprochés de cet import)
-  reception(qr: string, saisieManuelle: boolean, importId?: number): Promise<Envoi> {
+  // emballage : mode des cosses plates choisi sur le téléphone (Cartons / Séparées)
+  reception(qr: string, saisieManuelle: boolean, importId?: number, emballage?: 'carton' | 'separe'): Promise<Envoi> {
     const uuid = nouvelUuid();
     return this.envoyer({
-      uuid, controle: 'reception', corps: { uuid, qr, import_id: importId, saisie_manuelle: saisieManuelle }, date: new Date().toISOString(),
+      uuid, controle: 'reception', corps: { uuid, qr, import_id: importId, emballage, saisie_manuelle: saisieManuelle }, date: new Date().toISOString(),
     });
   }
 
@@ -108,15 +116,6 @@ export class ControlesService {
     return firstValueFrom(this.http.post<PaletteReception>(api(`/mobile/palettes/${id}/rouvrir`), {}));
   }
 
-  // ---------- Inventaire initial (chef de magasin, administrateur ; en ligne) ----------
-  inventaireEmplacement(code: string): Promise<EmplacementInventaire> {
-    return firstValueFrom(this.http.get<EmplacementInventaire>(api(`/mobile/inventaire/emplacements/${encodeURIComponent(code)}`)));
-  }
-
-  validerInventaire(code: string, qrs: string[]): Promise<InventaireValide> {
-    return firstValueFrom(this.http.post<InventaireValide>(api(`/mobile/inventaire/emplacements/${encodeURIComponent(code)}`), { qrs }));
-  }
-
   // ---------- Ranger le magasin (toujours en ligne) : le magasinier choisit, l'API contrôle et historise ----------
   produitARanger(qr: string): Promise<ProduitARanger> {
     return firstValueFrom(this.http.get<ProduitARanger>(api('/mobile/ranger/produit'), { params: { qr } }));
@@ -129,6 +128,11 @@ export class ControlesService {
   // Un produit (un colis) : ticket, emplacement de départ, emplacement d'arrivée
   deplacer(qr: string, depuis: string, vers: string, manuel: boolean): Promise<ResultatControle> {
     return firstValueFrom(this.http.post<ResultatControle>(api('/mobile/ranger/deplacer'), { uuid: nouvelUuid(), qr, depuis, vers, saisie_manuelle: manuel }));
+  }
+
+  // Cartons de cosses scannés (un ou plusieurs), posés à l'arrivée : sur une palette du haut, ou un emplacement vide (nouvelle palette)
+  deplacerCartons(cartons: string[], vers: string): Promise<ResultatControle> {
+    return firstValueFrom(this.http.post<ResultatControle>(api('/mobile/ranger/cartons'), { uuid: nouvelUuid(), cartons, vers }));
   }
 
   // Toute la palette d'un emplacement, sur un emplacement vide
@@ -178,11 +182,61 @@ export class ControlesService {
     return firstValueFrom(this.http.get<ContenuEmplacement>(api(`/mobile/emplacement/${encodeURIComponent(code)}`)));
   }
 
+  // Étiquette d'un carton de cosses scannée dans Consulter
+  carton(qr: string): Promise<CartonConsulte> {
+    return firstValueFrom(this.http.get<CartonConsulte>(api('/mobile/carton'), { params: { qr } }));
+  }
+
   produit(reference: string, lot = ''): Promise<LigneProduit[]> {
     return firstValueFrom(this.http.get<LigneProduit[]>(api('/mobile/produit'), { params: lot ? { reference, lot } : { reference } }));
   }
 
   // Envoie les opérations en attente, dans l'ordre (même uuid : jamais comptées deux fois)
+  // ---------- Palettes de cosses (cartons et cosses séparées) ----------
+  ouvrirPaletteCosses(importId: number): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api('/mobile/palettes-cosses'), { import_id: importId }));
+  }
+
+  terminerPaletteCosses(id: number): Promise<{ message: string; supprimee?: boolean }> {
+    return firstValueFrom(this.http.post<{ message: string; supprimee?: boolean }>(api(`/mobile/palettes-cosses/${id}/terminer`), {}));
+  }
+
+  // Palette de connecteurs du magasin à compléter : l'étiquette de sa place ; puis la remettre (même place)
+  completerPalette(importId: number, emplacement: string): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api('/mobile/palettes-cosses/completer'), { import_id: importId, emplacement }));
+  }
+
+  remettrePalette(id: number, emplacement: string): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api(`/mobile/palettes-cosses/${id}/remettre`), { emplacement }));
+  }
+
+  rouvrirPaletteCosses(id: number): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api(`/mobile/palettes-cosses/${id}/rouvrir`), {}));
+  }
+
+  // ---------- Cartons de cosses (import reçu en cartons) ----------
+  // La cosse était séparée (mauvais choix « Cartons ») : elle sort du carton, reste reçue
+  sortirDuCarton(cartonId: number, cosse: { uuid?: string; controle_id?: number }): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api(`/mobile/cartons/${cartonId}/sortir`), cosse));
+  }
+
+  // Cosse reçue séparée, mise dans le carton ouvert
+  mettreDansCarton(cartonId: number, controleId: number): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api(`/mobile/cartons/${cartonId}/cosses`), { controle_id: controleId }));
+  }
+
+  terminerCarton(id: number): Promise<{ message: string }> {
+    return firstValueFrom(this.http.post<{ message: string }>(api(`/mobile/cartons/${id}/terminer`), {}));
+  }
+
+  rouvrirCarton(id: number): Promise<unknown> {
+    return firstValueFrom(this.http.post(api(`/mobile/cartons/${id}/rouvrir`), {}));
+  }
+
+  retirerCosseCarton(cartonId: number, controleId: number): Promise<unknown> {
+    return firstValueFrom(this.http.delete(api(`/mobile/cartons/${cartonId}/cosses/${controleId}`)));
+  }
+
   async envoyerAttente(): Promise<number> {
     if (this.envoiEnCours()) return 0;
     this.envoiEnCours.set(true);
@@ -192,7 +246,7 @@ export class ControlesService {
         try {
           const r = await this.poster(op);
           this.retirer(op.uuid);
-          this.memoriser(r);
+          if (!op.chemin) this.memoriser(r); // une action gardée n'a pas de résultat de scan
           envoyees++;
         } catch (err) {
           const e = err as HttpErrorResponse;
@@ -214,16 +268,26 @@ export class ControlesService {
     this.retirer(uuid);
   }
 
+  // Ce ticket attend-il déjà d'être envoyé (scanné pendant la coupure) ?
+  dejaEnAttente(qr: string, importId?: number): OperationEnAttente | null {
+    const t = qr.trim();
+    return this.attente().find((o) => o.controle === 'reception' && o.corps.qr.trim() === t && (o.corps.import_id ?? null) === (importId ?? null)) ?? null;
+  }
+
   private async envoyer(op: OperationEnAttente): Promise<Envoi> {
     try {
-      const resultat = await this.poster(op);
+      // des scans attendent encore : ils partent d'abord (même ordre) ; s'ils ne passent pas, celui-ci attend après eux
+      if (navigator.onLine && this.attente().length) await this.envoyerAttente();
+      // pas de réseau du tout (ou file pas encore vidée) : gardé tout de suite, sans attendre
+      if (!navigator.onLine || this.attente().length) throw new HttpErrorResponse({ status: 0 });
+      const resultat = await firstValueFrom(this.http.post<ResultatControle>(api(`/mobile/${op.controle}`), op.corps).pipe(timeout(DELAI_RECEPTION_MS)));
       this.memoriser(resultat);
       return { etat: 'fait', resultat };
     } catch (err) {
       const e = err as HttpErrorResponse;
       if (injoignable(e)) {
         // pas de réseau : l'opération est gardée et sera envoyée au retour du Wi-Fi
-        op.derniereErreur = e.status === 0 ? 'Pas de réseau' : 'Serveur indisponible';
+        op.derniereErreur = e.status === 0 ? 'Pas de réseau' : e instanceof TimeoutError ? 'Pas de réponse' : 'Serveur indisponible';
         this.attente.update((l) => [...l, op]);
         this.sauver();
         return { etat: 'en_attente', operation: op };
@@ -233,7 +297,29 @@ export class ControlesService {
   }
 
   private poster(op: OperationEnAttente): Promise<ResultatControle> {
-    return firstValueFrom(this.http.post<ResultatControle>(api(`/mobile/${op.controle}`), op.corps));
+    return firstValueFrom(this.http.post<ResultatControle>(api(op.chemin ?? `/mobile/${op.controle}`), op.corps));
+  }
+
+  // Action de la réception (terminer le carton ouvert, terminer la palette ouverte) : envoyée tout de suite si le
+  // réseau marche et qu'aucun scan n'attend ; sinon gardée dans la file, après les scans gardés (même ordre).
+  async actionReception(chemin: string, importId: number, libelle: string): Promise<{ garde: boolean; message?: string }> {
+    const uuid = nouvelUuid();
+    const op: OperationEnAttente = {
+      uuid, controle: 'reception', chemin, libelle, corps: { uuid, qr: '', import_id: importId, saisie_manuelle: false }, date: new Date().toISOString(),
+    };
+    if (navigator.onLine && this.attente().length) await this.envoyerAttente(); // les scans gardés partent d'abord
+    if (navigator.onLine && !this.attente().length) {
+      try {
+        const r = await firstValueFrom(this.http.post<{ message: string }>(api(chemin), op.corps));
+        return { garde: false, message: r.message };
+      } catch (err) {
+        if (!injoignable(err as HttpErrorResponse)) throw err;
+      }
+    }
+    op.derniereErreur = 'Pas de réseau';
+    this.attente.update((l) => [...l, op]);
+    this.sauver();
+    return { garde: true };
   }
 
   private memoriser(r: ResultatControle): void {

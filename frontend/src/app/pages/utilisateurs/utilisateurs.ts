@@ -56,7 +56,6 @@ export class Utilisateurs implements OnInit {
       admins: liste.filter((u) => u.role === 'admin').length,
       chefs: liste.filter((u) => u.role === 'chef_magasin').length,
       magasiniers: liste.filter((u) => u.role === 'magasinier').length,
-      planificateurs: liste.filter((u) => u.role === 'planificateur').length,
       inactifs: liste.filter((u) => !u.actif).length,
     };
   });
@@ -132,6 +131,16 @@ export class Utilisateurs implements OnInit {
         this.enregistrement.set(false);
         this.erreurForm.set(err.error?.message || "Erreur lors de l'enregistrement.");
       },
+    });
+  }
+
+  libererMobile(u: Utilisateur): void {
+    this.service.libererMobile(u.id!).subscribe({
+      next: () => {
+        this.afficherToast(`Session mobile de ${u.matricule} libérée`);
+        this.charger();
+      },
+      error: (err: HttpErrorResponse) => this.afficherToast(err.error?.message || 'Erreur', true),
     });
   }
 

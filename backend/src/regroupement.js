@@ -47,7 +47,7 @@ function lignes(unites) {
 const resume = (unites) =>
   lignes(unites).map((l) => ({ reception_id: l.reception_id, reference: l.reference, lot: l.lot, type: l.type, taille_bobine: l.taille_bobine, quantite: l.quantite }));
 
-function proposerRegroupements(occupation, { capaciteTampon, limites }) {
+function proposerRegroupements(occupation, { capaciteTampon }) {
   const places = contenuParPlace(occupation);
   const occ = (c) => places.get(c) ?? [];
   const etat = () => [...places.entries()].flatMap(([c, us]) => us.map((u) => ({ ...u, emplacement: c })));
@@ -70,7 +70,7 @@ function proposerRegroupements(occupation, { capaciteTampon, limites }) {
     const autres = etat().filter((u) => u.emplacement !== depuis);
     const vers = candidats
       .sort((a, b) => ecart(a) - ecart(b) || distance(a) - distance(b))
-      .find((c) => !R.verifierPlan(lignes(unites).map((l) => ({ id: l.id, emplacement: c, quantite: l.quantite })), lignes(unites), autres, capaciteTampon, limites));
+      .find((c) => !R.verifierPlan(lignes(unites).map((l) => ({ id: l.id, emplacement: c, quantite: l.quantite })), lignes(unites), autres, capaciteTampon));
     if (!vers) continue;
     propositions.push({
       id: `palette-${depuis}`, sorte: 'palette', depuis, vers, libere: depuis, nb_bobines: 0, gestes: 1,

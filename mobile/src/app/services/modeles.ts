@@ -1,7 +1,7 @@
 // Modèles partagés avec l'API (mêmes noms que l'application web : frontend/src/app/services)
 import { codeDuNumero, estCodeValide } from './plan';
 
-export type Role = 'admin' | 'chef_magasin' | 'magasinier' | 'planificateur';
+export type Role = 'admin' | 'chef_magasin' | 'magasinier';
 
 export interface Utilisateur {
   id: number;
@@ -20,7 +20,6 @@ export const LIBELLES_ROLES: Record<Role, string> = {
   admin: 'Administrateur',
   chef_magasin: 'Chef de magasin',
   magasinier: 'Magasinier',
-  planificateur: 'Planificateur',
 };
 
 export type TypeProduit = 'bobine' | 'cosse' | 'connecteur';
@@ -60,8 +59,17 @@ export interface ResultatControle {
   preparation?: PreparationExport;
   export_id?: number;
   places_liberees?: string[];
+  descente?: Descente | null; // export : carton ouvert, cosses restantes à descendre ; descente : état après ce scan
   // ticket fournisseur (un ticket = un colis)
   colis?: { numero: number; confection: number | null; recus: number; attendus: number };
+  // import par référence : pièces de ce colis et compteur de sa référence (ce colis compris)
+  pieces?: { reference: string; pieces: number; recues: number; attendues: number; colis: number; tolerance: number };
+  // cosse déjà reçue séparée, rescannée avec un carton ouvert : elle peut y être mise
+  proposition_carton?: { controle_id: number; carton_id: number; numero: number };
+  // cosse entrée dans un carton ; scan = uuid du scan (pour la sortir du carton si c'était une cosse séparée)
+  carton?: { id: number; numero: number; reference: string; lot: string; cosses: number; scan?: string };
+  // palette de cosses : après un scan de réception (cosses, cartons), ou la palette à ranger (rangement)
+  palette_cosses?: { id: number; numero: number; cosses: number; cartons?: number; contenu?: string; nb_cartons?: number; nb_separees?: number; references?: string[] };
   // réception par palette : état de la palette après ce scan
   palette?: { id: number; numero: number; type?: TypePalette; taille?: string | null; n?: number; capacite?: number; pleine?: boolean; reste?: number; bobines?: number };
   // rangement, 1re étape : emplacement où aller (POST /mobile/rangement/suggestion)
@@ -88,6 +96,8 @@ export interface ContenuEmplacement {
     colis?: number[]; // numéros des colis rangés ici (tickets fournisseur)
   }[];
   controles: { resultat: string; reference: string; lot: string; date: string; par: string }[];
+  // palette de cosses (cartons et cosses séparées) : pleine, elle se déplace en entier
+  palette?: { id: number; numero: number; cosses: number; separees: number; cartons: { numero: number; reference: string; lot: string; en_stock: number }[] } | null;
 }
 
 export interface LigneProduit {
@@ -130,6 +140,8 @@ export interface LignePreparation {
   quantite: number;
   preleves: number; // colis déjà pris (tickets fournisseur)
   valide: boolean;
+  pieces?: number | null; // pièces de ces colis (visibilité), null si inconnues
+  pieces_approx?: boolean;
   hors_fifo?: boolean; // pris par l'administrateur à la place du produit proposé par le FIFO
 }
 
@@ -178,10 +190,27 @@ export const ressembleTicket = (texte: string) => /[;|]/.test(texte) || texte.tr
 // Référence et lot d'un ticket (formulaire d'export, consultation)
 export function referenceEtLot(texte: string): { reference: string; lot: string } {
   const morceaux = texte.split(/[;|\n\t]+/).map((x) => x.split(/[:=]/).pop()!.trim()).filter(Boolean);
-  const reference = (morceaux[0] ?? '').toUpperCase();
+  const reference = (morceaux[0] ?? '').toUpperCase().replace(/\s+/g, ' ');
   // ticket fournisseur : référence ; confection ; colis ; lot ; suffixe
   const lot = morceaux.length === 5 ? morceaux[3] : (morceaux[1] ?? '');
   return { reference, lot };
+}
+
+// Étiquette d'un carton de cosses (imprimée sur le web) : « référence;lot;pièces;JJ/MM/AAAA HH:MM:SS.mmm »
+export const estEtiquetteCarton = (texte: string) => /^\s*[^;]+;[^;]+;\d+;\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}\.\d{3}\s*$/.test(texte);
+
+// GET /api/mobile/carton?qr= : un carton de cosses, ses cosses, sa palette et où il est
+export interface CartonConsulte {
+  carton: {
+    id: number; numero: number; reference: string; lot: string; statut: 'ouvert' | 'termine' | 'range'; cosses: number; pieces: number | null;
+    en_stock: number; emplacement: string | null; date_etiquette: string | null;
+    liste: { colis: number | null; pieces: number | null; sortie: boolean; en_stock: boolean }[];
+  };
+  palette: {
+    id: number; numero: number; statut: 'ouverte' | 'terminee' | 'rangee'; emplacement: string | null; contenu: string; cosses: number; en_stock: number; nb_separees: number;
+    cartons: { id: number; numero: number; reference: string; lot: string; cosses: number; en_stock: number; statut: string }[];
+  } | null;
+  import: { id: number; numero_livraison: string | null };
 }
 
 // QR d'une étiquette d'emplacement : « EMPL:D011 » -> « D011 » (le code seul est accepté aussi),
@@ -208,10 +237,14 @@ export const ETAPES_IMPORT: Record<EtapeImport, string> = {
 };
 
 export interface AnomalieReception {
-  type: 'manquant' | 'en_trop' | 'hors_import';
+  type: 'manquant' | 'en_trop' | 'hors_import' | 'pieces_manquantes' | 'pieces_en_trop';
   reference: string;
-  lot: string;
+  lot: string | null; // null : écart de pièces d'une référence (import par référence)
   quantite: number;
+  unite?: 'pieces';
+  attendues?: number;
+  recues?: number;
+  colis?: number;
 }
 
 export interface AvancementReception {
@@ -220,7 +253,74 @@ export interface AvancementReception {
   manquants: number;
   en_trop: number;
   hors_import: number;
+  colis_recus?: number;
 }
+
+// Import par référence (fichier de l'Italie : référence + total de pièces, sans lot ni colis) :
+// attendus / recus de l'avancement sont alors des pièces
+export type StatutReference = 'non_recue' | 'conforme' | 'tolere' | 'manquant' | 'en_trop';
+export interface ReferenceAttendue {
+  reference: string;
+  type: TypeProduit;
+  taille_bobine: string | null;
+  type_cosse: 'axiale' | 'plat' | null;
+  attendues: number;
+  recues: number;
+  colis: number;
+  lots: { lot: string; colis: number; pieces: number }[];
+  ecart: number;
+  tolerance: number;
+  statut: StatutReference;
+}
+export interface PiecesImport {
+  attendues: number;
+  recues: number;
+  en_trop: number;
+  a_reclamer: number;
+  references: ReferenceAttendue[];
+}
+
+// Carton de cosses plates : une référence, un lot ; il est toujours sur une palette de cosses
+export interface CartonReception {
+  id: number;
+  palette_id: number | null;
+  palette_numero: number | null;
+  numero: number;
+  reference: string | null;
+  lot: string | null;
+  statut: 'ouvert' | 'termine' | 'range';
+  cosses: number;
+  pieces: number | null;
+  imprime: boolean; // étiquette imprimée sur le web (il ne se rouvre plus)
+  emplacement: string | null;
+  en_stock: number;
+  liste: { controle_id: number; colis: number | null; pieces: number | null; reference: string; lot: string }[];
+}
+
+// Palette de cosses : plusieurs cartons (références mélangées possibles) et des cosses séparées ; rangée entière
+export interface PaletteCossesReception {
+  id: number;
+  numero: number;
+  statut: 'ouverte' | 'terminee' | 'rangee';
+  emplacement: string | null;
+  cartons: CartonReception[];
+  nb_cartons: number;
+  separees: { controle_id: number; colis: number | null; reference: string; lot: string; pieces: number | null }[];
+  nb_separees: number;
+  cosses: number;
+  pieces: number | null;
+  references: string[];
+  etiquettes_a_imprimer: number;
+  contenu: string; // « 3 cartons + 2 cosses séparées · 26 cosses » ; connecteurs : « 4 cartons de connecteurs »
+  ouverte_par_moi?: boolean;
+  famille?: 'cosse' | 'connecteur' | null;
+  descendue?: boolean; // palette de connecteurs du magasin descendue pour être complétée
+  a_ajouter?: number; // cartons de l'import ajoutés pendant qu'elle est descendue
+  en_stock?: number;
+}
+
+// « 45 000 »
+export const nombre = (n: number) => Number(n).toLocaleString('fr-FR');
 
 export interface LigneReception {
   id: number;
@@ -247,6 +347,16 @@ export interface ImportReception {
   reception: 'non_commencee' | 'en_cours' | 'terminee';
   etape: EtapeImport;
   avancement: AvancementReception;
+  mode?: 'detail' | 'resume';
+  // 'separee' : la réception contrôle seulement, le rangement vient après sa validation ; 'palette' : rangée pendant la réception
+  mode_reception?: 'separee' | 'palette';
+  pieces?: PiecesImport | null; // import par référence
+  cartons?: CartonReception[];
+  carton_ouvert?: CartonReception | null; // le carton en cours de ce magasinier
+  palettes_cosses?: PaletteCossesReception[];
+  palette_ouverte?: PaletteCossesReception | null; // la palette de cosses en cours de ce magasinier
+  palette_descendue?: PaletteCossesReception | null; // palette de connecteurs du magasin que ce magasinier complète
+  a_des_connecteurs?: boolean; // l'import a des connecteurs (cartons sur palette)
   produits?: number;
   lignes?: LigneReception[];
   anomalies?: AnomalieReception[];
@@ -260,7 +370,7 @@ export interface ImportReception {
 // contrôlés et historisés par l'API avec son matricule
 export interface Remplissage {
   n: number;
-  capacite: number | null; // null : vide, ou connecteurs (volume et poids)
+  capacite: number | null; // null : vide, ou connecteurs (pas de limite)
   libelle: string; // « 4/6 petites bobines », « 7/10 cosses », « vide »
 }
 
@@ -274,6 +384,8 @@ export interface ProduitARanger {
   type_cosse?: 'axiale' | 'plat' | null;
   emplacements: { code: string; quantite: number }[]; // où ce produit est en stock
   ici: string | null; // emplacement exact du colis, s'il est connu
+  carton?: { id: number; numero: number; cosses: number; qr: string } | null; // étiquette d'un carton (il se déplace seul ou avec d'autres)
+  palette?: { id: number; numero: number; cosses: number; cartons: number; separees: number } | null; // sa palette : elle se déplace en entier
 }
 
 // GET /api/mobile/ranger/emplacement/:code
@@ -379,5 +491,32 @@ export interface FinReception {
   reclamations_creees?: number;
   anomalies: AnomalieReception[];
   avancement?: AvancementReception;
+  pieces?: PiecesImport | null;
+  hors_import_en_attente?: string[]; // références absentes du catalogue : pas encore au stock
   deja_terminee?: boolean;
+}
+
+// Carton de cosses ouvert à l'export : ses cosses restantes descendent tout de suite en cosses séparées,
+// chacune à l'emplacement imposé (même référence et même lot le plus proche de la porte, sinon le plus proche vide)
+export interface CosseADescendre {
+  ticket: string;
+  colis: number;
+  reference: string;
+  lot: string;
+  emplacement: string | null;
+  posee: boolean;
+}
+
+export interface Descente {
+  id: number;
+  statut: 'en_cours' | 'terminee';
+  depuis: string; // emplacement du haut où est la palette
+  carton_id: number;
+  carton: number; // n° du carton
+  reference: string;
+  lot: string;
+  palette: number | null;
+  cosses: CosseADescendre[];
+  restantes: number;
+  emplacements: string[]; // places où poser les cosses restantes
 }

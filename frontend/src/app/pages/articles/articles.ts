@@ -78,6 +78,24 @@ export class Articles implements OnInit {
     return [...m].map(([nom, c]) => ({ nom, ...c })).sort((a, b) => b.total - a.total || a.nom.localeCompare(b.nom));
   });
 
+  // Formulaire : familles de connecteurs proposées d'après le texte tapé (toutes si une famille est choisie)
+  famillesProposees(): { nom: string; total: number }[] {
+    const q = nomFamille(this.form.categorie);
+    const toutes = this.categoriesConnecteur();
+    if (!q || toutes.some((c) => c.nom === q)) return toutes;
+    return toutes.filter((c) => c.nom.includes(q));
+  }
+
+  estFamilleChoisie(nom: string): boolean {
+    return nomFamille(this.form.categorie) === nom;
+  }
+
+  // Texte tapé qui n'est pas une famille existante : nouvelle famille (créée à l'enregistrement)
+  nouvelleFamille(): string {
+    const q = nomFamille(this.form.categorie);
+    return q && !this.categoriesConnecteur().some((c) => c.nom === q) ? q : '';
+  }
+
   // Bobines par taille (petites 6, moyennes 2, grandes 1 par palette), selon la recherche en cours
   readonly comptesTaille = computed(() => {
     const q = this.q();
@@ -302,3 +320,6 @@ export class Articles implements OnInit {
 const RANG: Record<FamilleArticle, number> = { bobine: 0, cosse: 1, connecteur: 2 };
 const ordre = (a: Article, b: Article) =>
   RANG[a.famille] - RANG[b.famille] || a.categorie.localeCompare(b.categorie) || a.reference.localeCompare(b.reference);
+
+// Nom d'une famille de connecteur tel qu'enregistré (majuscules, espaces simples)
+const nomFamille = (t: string) => String(t ?? '').trim().replace(/\s+/g, ' ').toUpperCase();

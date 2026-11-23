@@ -160,9 +160,9 @@
             </td>
             <td class="empl">
               @if (l.emplacement_scanne || l.emplacement_prevu) {
-                <span class="etiq" [class.barre]="l.resultat === 'faux_emplacement'">{{ l.emplacement_scanne ?? '—' }}</span>
+                <span class="etiq" [class.barre]="l.resultat === 'faux_emplacement'">{{ (l.emplacement_scanne | empl) || '—' }}</span>
                 @if (l.emplacement_prevu && l.emplacement_prevu !== l.emplacement_scanne) {
-                  <small>prévu <b class="code">{{ l.emplacement_prevu }}</b></small>
+                  <small>prévu <b class="code">{{ l.emplacement_prevu | empl }}</b></small>
                 }
               } @else {
                 —

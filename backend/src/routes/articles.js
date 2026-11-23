@@ -1,4 +1,4 @@
-// Catalogue des articles (administrateur) : bobines, cosses et familles de connecteurs avec leurs références.
+// Catalogue des articles (administrateur et chef de magasin) : bobines, cosses et familles de connecteurs avec leurs références.
 //   GET    /api/articles                    ?famille=&categorie=&q=   liste
 //   GET    /api/articles/resume             nombre de références par famille et catégorie
 //   GET    /api/articles/changements-taille ?reference=   historique des changements de taille des bobines

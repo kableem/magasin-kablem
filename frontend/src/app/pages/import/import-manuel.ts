@@ -8,13 +8,9 @@ interface LigneSaisie {
   reference: string;
   lot: string;
   quantite: number | null;
-  longueur: number | null;
-  largeur: number | null;
-  hauteur: number | null;
-  poids: number | null;
 }
 
-const ligneVide = (): LigneSaisie => ({ reference: '', lot: '', quantite: null, longueur: null, largeur: null, hauteur: null, poids: null });
+const ligneVide = (): LigneSaisie => ({ reference: '', lot: '', quantite: null });
 const normaliser = (r: string) => r.trim().replace(/\s+/g, ' ').toUpperCase();
 
 // Saisie d'un import à la main (administrateur, pour les essais). Le type de chaque produit est
@@ -74,15 +70,6 @@ const normaliser = (r: string) => r.trim().replace(/\s+/g, ' ').toUpperCase();
               <button type="button" class="icone-btn" (click)="retirer(k)" [disabled]="lignes().length === 1" aria-label="Retirer la ligne">
                 <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
               </button>
-              @if (a?.famille === 'connecteur') {
-                <div class="carton">
-                  <span>Un carton :</span>
-                  <label>L <input [name]="'lo' + k" type="number" min="1" [(ngModel)]="l.longueur" /> cm</label>
-                  <label>l <input [name]="'la' + k" type="number" min="1" [(ngModel)]="l.largeur" /> cm</label>
-                  <label>h <input [name]="'ha' + k" type="number" min="1" [(ngModel)]="l.hauteur" /> cm</label>
-                  <label>Poids <input [name]="'po' + k" type="number" min="0.1" step="0.1" [(ngModel)]="l.poids" /> kg</label>
-                </div>
-              }
             </div>
           }
         </div>
@@ -114,9 +101,6 @@ const normaliser = (r: string) => r.trim().replace(/\s+/g, ' ').toUpperCase();
     .type[data-famille='cosse'] { color: #9a5205; background: #fff2e0; }
     .type[data-famille='connecteur'] { color: #552a8c; background: #f2ebfc; }
     .type[data-famille='inconnue'] { color: #b81818; background: #fde8e8; }
-    .carton { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 4px; font-size: 13px; color: var(--gris); }
-    .carton label { display: flex; align-items: center; gap: 4px; }
-    .carton input { width: 76px; height: 34px; }
     .ajouter { margin-top: 10px; }
     @media (max-width: 760px) {
       .entete-lignes { display: none; }
@@ -165,7 +149,7 @@ export class ImportManuel implements OnInit {
     if (inconnue) {
       return this.erreur.set(
         inconnue.reference.trim()
-          ? `${normaliser(inconnue.reference)} est absente du catalogue Articles : ajoutez-la d'abord dans Administration → Articles.`
+          ? `${normaliser(inconnue.reference)} est absente du catalogue Articles : ajoutez-la d'abord dans la page Articles.`
           : 'Une ligne n’a pas de référence.'
       );
     }

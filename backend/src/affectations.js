@@ -29,7 +29,8 @@ const ordreColis = (a, b) => numeroColis(a) - numeroColis(b) || a.localeCompare(
 async function attribuerColis(connexion, receptionId) {
   const [recus] = await connexion.query(
     `SELECT DISTINCT c.ticket FROM controles_mobile c
-     WHERE c.reception_id = ? AND c.controle = 'reception' AND c.resultat = 'conforme' AND c.ticket IS NOT NULL
+     WHERE c.reception_id = ? AND c.controle = 'reception' AND c.resultat IN ('conforme', 'ecart_quantite') AND c.ticket IS NOT NULL
+       AND c.carton_id IS NULL AND c.palette_cosses_id IS NULL -- les cosses d'une palette se rangent avec leur palette
        AND NOT EXISTS (SELECT 1 FROM affectations_colis a WHERE a.ticket = c.ticket)`,
     [receptionId]
   );

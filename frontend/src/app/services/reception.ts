@@ -18,28 +18,9 @@ export const TAILLES_BOBINE: { valeur: TailleBobine; libelle: string }[] = [
   { valeur: 'petite', libelle: 'Petite' },
 ];
 
-// Un carton de connecteurs : dimensions en cm, poids en kg
-export interface Carton {
-  longueur: number | null;
-  largeur: number | null;
-  hauteur: number | null;
-  poids: number | null;
-}
-
-// Limites d'une palette de connecteurs (réglables par l'administrateur)
-export interface LimitesConnecteurs {
-  longueur: number; // cm
-  largeur: number; // cm
-  hauteur_n3: number; // cm, hauteur utile au niveau 3
-  hauteur_n4: number; // cm, hauteur utile au niveau 4
-  taux: number; // % du volume utilisable
-  poids_max: number; // kg par palette
-}
-
 export interface Parametres {
   tampon_capacite: number;
   tampon_max: number;
-  connecteurs: LimitesConnecteurs;
   reclamation_delai_jours: number;
 }
 
@@ -108,6 +89,7 @@ export interface ProduitReclame {
   lot: string;
   quantite_annoncee: number;
   quantite: number;
+  unite?: 'colis' | 'pieces'; // pièces : écart d'une référence d'un import résumé
   motif: MotifReclamation;
   commentaire: string | null;
   date_reclamation: string;
@@ -166,7 +148,6 @@ export interface ProduitImport {
   largeur?: number | null;
   hauteur?: number | null;
   poids?: number | null;
-  cartons?: Carton[]; // saisie des connecteurs
   commentaire?: string | null; // facultatif
   reclamation?: Reclamation | null; // anomalie constatée à la réception
   // Réception mobile : produits scannés (reçus), en trop, rangés
@@ -190,11 +171,15 @@ export const ETAPES_IMPORT: Record<EtapeImport, string> = {
   range: 'Rangé',
 };
 export interface AnomalieReception {
-  type: 'manquant' | 'en_trop' | 'hors_import';
+  type: 'manquant' | 'en_trop' | 'hors_import' | 'pieces_manquantes' | 'pieces_en_trop';
   reception_id?: number;
   reference: string;
-  lot: string;
+  lot: string | null; // null : écart de pièces d'une référence (import résumé)
   quantite: number;
+  unite?: 'pieces';
+  attendues?: number;
+  recues?: number;
+  colis?: number;
 }
 export interface AvancementReception {
   attendus: number;
@@ -203,16 +188,110 @@ export interface AvancementReception {
   en_trop: number;
   hors_import: number;
   ranges: number;
+  colis_recus?: number;
   anomalies: AnomalieReception[];
 }
 
+// Import résumé (fichier de l'Italie : référence + total de pièces, sans lot ni colis)
+export type StatutReference = 'non_recue' | 'conforme' | 'tolere' | 'manquant' | 'en_trop';
+export interface ReferenceAttendue {
+  reference: string;
+  type: TypeProduit;
+  taille_bobine: TailleBobine | null;
+  type_cosse: TypeCosse | null;
+  attendues: number; // pièces annoncées par l'Italie
+  recues: number; // somme des pièces des tickets scannés
+  colis: number;
+  lots: { lot: string; colis: number; pieces: number }[];
+  ecart: number;
+  tolerance: number; // écart accepté (pièces)
+  statut: StatutReference;
+}
+export interface PiecesImport {
+  tolerance_pct: number;
+  attendues: number;
+  recues: number;
+  en_trop: number;
+  a_reclamer: number;
+  references: ReferenceAttendue[];
+}
+// Carton de cosses plates (import reçu en cartons) : son étiquette s'imprime ici, sur le web
+export interface CartonImport {
+  id: number;
+  palette_id: number | null; // palette de cosses qui porte ce carton
+  palette_numero: number | null;
+  numero: number;
+  reference: string | null;
+  lot: string | null;
+  statut: 'ouvert' | 'termine' | 'range';
+  cosses: number;
+  pieces: number | null;
+  imprime: boolean;
+  date_etiquette: string | null; // « 06/11/2026 10:42:31.517 » : date système de la 1re impression
+  qr: string | null;
+  emplacement: string | null;
+  en_stock: number; // cosses encore dans le carton (après les sorties)
+  hors_stock: number; // cosses d'une référence absente du catalogue
+}
+// Palette de cosses : plusieurs cartons (références mélangées possibles) et des cosses séparées,
+// rangée entière sur un emplacement vide ; rien ne s'y ajoute ensuite
+export interface PaletteCossesImport {
+  id: number;
+  numero: number;
+  statut: 'ouverte' | 'terminee' | 'rangee';
+  emplacement: string | null;
+  cartons: CartonImport[];
+  nb_cartons: number;
+  separees: { controle_id: number; colis: number | null; reference: string; lot: string; pieces: number | null }[];
+  nb_separees: number;
+  cosses: number;
+  pieces: number | null;
+  references: string[];
+  hors_stock: number;
+  en_stock: number; // cosses encore sur la palette (après les sorties)
+  etiquettes_a_imprimer: number;
+  contenu: string; // « 3 cartons + 2 cosses séparées · 26 cosses »
+}
+// Aperçu du fichier collé, avant la création de l'import résumé
+export interface ApercuImportResume {
+  references: { reference: string; pieces: number; ligne: number; type: TypeProduit | null; type_cosse: TypeCosse | null; taille_bobine: TailleBobine | null }[];
+  problemes: string[];
+  erreurs_lignes: { ligne: number; texte: string; reference?: string | null; message: string }[]; // lignes illisibles ou en double
+  total: number;
+}
+
 export type StatutImport = 'en_attente' | 'ajoute';
+
+// Sortie urgente (mobile) : la production attendait ce colis ; il a été contrôlé, posé près de la porte, puis sorti
+export interface SortieUrgenteImport {
+  id: number;
+  reception_id: number;
+  colis: number;
+  reference: string;
+  lot: string;
+  destination: string;
+  statut: 'a_poser' | 'posee' | 'sortie' | 'annulee'; // annulee (après la pose) : le colis est resté au stock
+  emplacement: string | null;
+  stock_existant: number;
+  export_id: number | null;
+  par: string | null; // magasinier
+  autorise_par: string | null; // chef ou administrateur : même référence déjà en stock (hors FIFO)
+  date_demande: string;
+  date_sortie: string | null;
+}
 
 // Import = un arrivage (ex. depuis l'Italie) qui regroupe plusieurs produits
 export interface ImportArrivage {
   id: number;
   source_id: number | null; // import de la base de l'Italie
   numero_livraison: string | null;
+  mode: 'detail' | 'resume'; // résumé : référence + total de pièces, les lots sont lus au scan
+  emballage: 'carton' | 'separe' | null; // cosses plates reçues en cartons ou séparées
+  cartons: CartonImport[];
+  palettes_cosses: PaletteCossesImport[];
+  hors_import_en_attente: { reference: string; colis: number }[]; // reçus hors import, référence absente du catalogue
+  urgences: SortieUrgenteImport[]; // colis sortis vers la production pendant la réception
+  pieces: PiecesImport | null;
   date_envoi: string | null;
   statut: StatutImport;
   date_creation: string;
@@ -251,6 +330,13 @@ export interface PlacementPropose {
 export interface LigneStock {
   id: number; // identifiant du (premier) placement
   ids: number[]; // placements regroupés : produits identiques (réf., lot, date) au même emplacement
+  // pièces de ces colis (visibilité seulement) : null si inconnues ; pieces_approx : estimées
+  pieces?: number | null;
+  pieces_approx?: boolean;
+  carton_id?: number | null; // carton de la ligne (quand elle vient d'un seul carton)
+  carton_numero?: number | null;
+  palette_cosses_id?: number | null; // palette de cosses (seule sur son emplacement, elle se déplace en entier)
+  palette_numero?: number | null;
   reception_id: number; // ligne de l'import
   reference: string;
   type: TypeProduit;
@@ -260,13 +346,6 @@ export interface LigneStock {
   quantite: number;
   emplacement: string | null; // affecté dans Gestion de stock (ex. C215)
   date_reception: string;
-  // Connecteurs : dimensions d'un carton (cm) et poids (kg) ; totaux de la ligne regroupée
-  longueur?: number | null;
-  largeur?: number | null;
-  hauteur?: number | null;
-  poids?: number | null;
-  volume?: number | null; // cm³
-  poids_total?: number | null; // kg
 }
 
 // "Bobine · Grande", "Cosse"…
@@ -281,6 +360,8 @@ export interface Prelevement {
   emplacement: string | null;
   quantite: number;
   place_liberee?: boolean; // l'emplacement est vide après la sortie
+  pieces?: number | null; // pièces des colis pris (visibilité)
+  pieces_approx?: boolean;
 }
 
 // Un lot disponible pour une sortie choisie par l'administrateur (sans FIFO), dans l'ordre du FIFO
@@ -290,12 +371,16 @@ export interface LotDisponible {
   date_reception: string;
   emplacement: string | null;
   quantite: number;
+  pieces?: number | null;
+  pieces_approx?: boolean;
 }
 
 export interface ApercuExport {
   reference: string;
   quantite: number;
   disponible: number;
+  pieces?: number | null; // pièces des colis qui sortiront
+  pieces_approx?: boolean;
   prelevements: Prelevement[];
 }
 
@@ -314,6 +399,8 @@ export interface ExportProduction {
   origine: 'web' | 'mobile' | 'web_secours';
   motif_force: string | null;
   hors_fifo?: number; // 1 : l'administrateur a sorti un autre produit que celui proposé par le FIFO
+  // sortie urgente : colis sorti pendant la réception de son import
+  urgence?: { colis: number; import_id: number; numero_livraison: string | null; autorise_par: string | null } | null;
 }
 
 export function libelleProduit(r: { type: TypeProduit | null; taille_bobine: TailleBobine | null; type_cosse?: TypeCosse | null }): string {
@@ -334,7 +421,7 @@ export function formatNombre(n: number | null | undefined): string {
 @Injectable({ providedIn: 'root' })
 export class ReceptionService {
   private http = inject(HttpClient);
-  private api = 'http://localhost:3000/api';
+  private api = '/api';
 
   // ---------- Imports ----------
   // Synchronisation avec la base de l'Italie : copie les nouveaux imports (en attente)
@@ -356,17 +443,63 @@ export class ReceptionService {
   // Import saisi à la main par l'administrateur (essais) : type d'après le catalogue Articles
   creerImportManuel(
     numero: string,
-    produits: { reference: string; lot: string; quantite: number | null; longueur?: number | null; largeur?: number | null; hauteur?: number | null; poids?: number | null }[]
+    produits: { reference: string; lot: string; quantite: number | null }[]
   ): Observable<{ id: number; numero: string; produits: number }> {
     return this.http.post<{ id: number; numero: string; produits: number }>(`${this.api}/imports/manuel`, { numero, produits });
+  }
+
+  // Import résumé : lignes « référence + quantité » collées depuis Excel ou le PDF de l'Italie
+  // Fichier Excel (.xlsx, .xls) ou .csv de l'Italie → lignes « référence <tab> quantité »
+  lireFichierImportResume(fichier: File): Observable<{ texte: string; lignes: number }> {
+    return this.http.post<{ texte: string; lignes: number }>(`${this.api}/imports/resume/fichier`, fichier, {
+      params: { nom: fichier.name },
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  }
+
+  apercuImportResume(texte: string): Observable<ApercuImportResume> {
+    return this.http.post<ApercuImportResume>(`${this.api}/imports/resume/apercu`, { texte });
+  }
+
+  creerImportResume(numero: string, dateEnvoi: string, texte: string): Observable<{ id: number; numero: string; references: number; pieces: number }> {
+    return this.http.post<{ id: number; numero: string; references: number; pieces: number }>(`${this.api}/imports/resume`, {
+      numero, date_envoi: dateEnvoi || undefined, texte,
+    });
+  }
+
+  // Étiquettes des cartons (PDF 115 × 75 mm) : un carton, ou toutes celles pas encore imprimées de l'import
+  etiquetteCarton(id: number): Observable<Blob> {
+    return this.http.post(`${this.api}/imports/cartons/${id}/etiquette`, {}, { responseType: 'blob' });
+  }
+
+  // Pointage d'un import par référence (annoncées, reçues, écart, lots, bilan), en PDF
+  pointagePdf(importId: number): Observable<Blob> {
+    return this.http.get(`${this.api}/imports/${importId}/pointage/pdf`, { responseType: 'blob' });
+  }
+
+  etiquettesCartons(importId: number): Observable<Blob> {
+    return this.http.post(`${this.api}/imports/${importId}/cartons/etiquettes`, {}, { responseType: 'blob' });
+  }
+
+  // Produits reçus hors import dont la référence vient d'être ajoutée au catalogue : au stock
+  entrerHorsImport(importId: number): Observable<{ integres: { reference: string; quantite: number }[]; en_attente: string[] }> {
+    return this.http.post<{ integres: { reference: string; quantite: number }[]; en_attente: string[] }>(`${this.api}/imports/${importId}/hors-import`, {});
   }
 
   creerImport(): Observable<{ id: number }> {
     return this.http.post<{ id: number }>(`${this.api}/imports`, {});
   }
 
-  supprimerImport(id: number): Observable<void> {
-    return this.http.delete<void>(`${this.api}/imports/${id}`);
+  // Administrateur : ce que la suppression d'un import effacerait, puis la suppression (motif + confirmation tapée)
+  bilanSuppression(id: number): Observable<BilanSuppression> {
+    return this.http.get<BilanSuppression>(`${this.api}/imports/${id}/suppression`);
+  }
+
+  supprimerImport(id: number, motif: string, confirmation: string, complet = false): Observable<{ id: number; numero_livraison: string | null; produits_retires: number; ajoutes_automatiquement: number[] }> {
+    return this.http.delete<{ id: number; numero_livraison: string | null; produits_retires: number; ajoutes_automatiquement: number[] }>(
+      `${this.api}/imports/${id}`,
+      { body: { motif, confirmation, complet } }
+    );
   }
 
   ajouterProduit(importId: number, produit: ProduitImport): Observable<{ id: number }> {
@@ -517,10 +650,6 @@ export class ReceptionService {
     return this.http.get<Parametres>(`${this.api}/parametres`);
   }
 
-  setLimitesConnecteurs(limites: LimitesConnecteurs): Observable<{ connecteurs: LimitesConnecteurs }> {
-    return this.http.put<{ connecteurs: LimitesConnecteurs }>(`${this.api}/parametres/connecteurs`, limites);
-  }
-
   // Étiquettes QR des places de la zone tampon (de T{de} à T{a}), en PDF
   telechargerEtiquettesTampon(de: number, a: number): Observable<HttpResponse<Blob>> {
     return this.http.get(`${this.api}/parametres/tampon/etiquettes`, { params: { de, a }, responseType: 'blob', observe: 'response' });
@@ -593,14 +722,33 @@ export interface MotifChangement {
   motif: MotifDeplacement | '';
   commentaire: string;
 }
-export type OrigineMouvement = 'deplacement' | 'plan_import' | 'automatique' | 'regroupement' | 'inventaire';
+export type OrigineMouvement = 'deplacement' | 'plan_import' | 'automatique' | 'regroupement' | 'inventaire' | 'suppression_import';
 export const ORIGINES_MOUVEMENT: Record<OrigineMouvement, string> = {
   deplacement: 'Déplacement',
   plan_import: "Plan d'import modifié",
   regroupement: 'Ranger le magasin',
   inventaire: 'Inventaire',
   automatique: 'Automatique',
+  suppression_import: "Suppression d'un import",
 };
+
+// Suppression d'un import par l'administrateur : ce qui sera effacé
+export interface BilanSuppression {
+  id: number;
+  numero_livraison: string | null;
+  statut: StatutImport;
+  reception: 'non_commencee' | 'en_cours' | 'terminee';
+  lignes: number;
+  produits_en_stock: number;
+  emplacements: string[];
+  non_ranges: number;
+  reclamations: number;
+  scans: number;
+  historique: number; // lignes d'historique des emplacements de ses produits
+  sorties_faites: number; // déjà sortis vers la production : l'historique des sorties est gardé
+  sorties_en_cours: { id: number; reference: string; par: string | null }[]; // bloquent la suppression
+  confirmation: string; // texte à taper pour confirmer
+}
 // « Ranger le magasin » : les magasiniers rangent librement sur le mobile (sans suggestion du système) ;
 // chaque déplacement est contrôlé et historisé avec le matricule
 export interface FiltresRanger {

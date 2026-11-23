@@ -26,7 +26,7 @@ export const UNITES = ['pièce', 'm', 'bobine', 'rouleau', 'boîte', 'kg'];
 @Injectable({ providedIn: 'root' })
 export class ProduitService {
   private http = inject(HttpClient);
-  private apiUrl = 'http://localhost:3000/api';
+  private apiUrl = '/api';
 
   getProduits(): Observable<Produit[]> {
     return this.http.get<Produit[]>(`${this.apiUrl}/produits`);

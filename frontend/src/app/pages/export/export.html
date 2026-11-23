@@ -94,7 +94,16 @@
                 @default { <span class="origine web">Web (ancien)</span> }
               }
               @if (e.hors_fifo) {
-                <span class="origine hors-fifo" title="L'administrateur a sorti un autre lot ou un autre emplacement que celui proposé par le FIFO">Hors FIFO</span>
+                <span class="origine hors-fifo" [attr.title]="e.urgence?.autorise_par ? 'Même référence déjà en stock : sortie autorisée par ' + e.urgence?.autorise_par : 'L\'administrateur a sorti un autre lot ou un autre emplacement que celui proposé par le FIFO'">Hors FIFO</span>
+              }
+              @if (e.urgence; as u) {
+                <span class="origine urgence" [attr.title]="'Colis n° ' + u.colis + ' sorti pendant la réception de l\'import ' + (u.numero_livraison ?? 'n° ' + u.import_id) + (u.autorise_par ? ', autorisé par ' + u.autorise_par : '')">Sortie urgente</span>
+                <small class="detail-urgence">
+                  colis n° {{ u.colis }} · import {{ u.numero_livraison ?? 'n° ' + u.import_id }}
+                  @if (u.autorise_par) {
+                    <span class="autorise">Autorisée par <b>{{ u.autorise_par }}</b></span>
+                  }
+                </small>
               }
             </td>
           </tr>

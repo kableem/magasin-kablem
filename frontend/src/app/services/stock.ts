@@ -45,7 +45,7 @@ export interface Mouvement {
 @Injectable({ providedIn: 'root' })
 export class StockService {
   private http = inject(HttpClient);
-  private apiUrl = 'http://localhost:3000/api';
+  private apiUrl = '/api';
 
   getEmplacements(): Observable<Emplacement[]> {
     return this.http.get<Emplacement[]>(`${this.apiUrl}/emplacements`);

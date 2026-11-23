@@ -5,6 +5,7 @@ const R = require('../rangement');
 const { lignesEnStock } = require('./stock');
 const { estGestionnaire } = require('../middleware/auth');
 const { expirerPreparations, retirerReserves } = require('../reservations');
+const { piecesParLigne, piecesDe, cumulerPieces } = require('../pieces');
 
 // Stock disponible pour une sortie : en place, moins ce que les sorties du mobile ont réservé
 async function stockSortie(connexion, verrou = false) {
@@ -88,27 +89,35 @@ function calculerChoix(lignes, reference, choix) {
   return { prelevements, quantite, horsFifo };
 }
 
-// Prélèvements à afficher : un même lot pris au même emplacement est regroupé en une ligne
-function versJson(prelevements) {
+// Prélèvements à afficher : un même lot pris au même emplacement est regroupé en une ligne.
+// infos (piecesParLigne) : ajoute les pièces des colis pris (visibilité).
+function versJson(prelevements, infos = null) {
   const lignes = [];
   for (const { ligne, quantite, libere } of prelevements) {
-    const meme = lignes.find(
+    let meme = lignes.find(
       (x) => x.lot === ligne.lot && x.date_reception === ligne.date_reception && x.emplacement === ligne.emplacement
     );
     if (meme) {
       meme.quantite += quantite;
       meme.place_liberee = meme.place_liberee || libere;
     } else {
-      lignes.push({
+      meme = {
         lot: ligne.lot,
         date_reception: ligne.date_reception,
         emplacement: ligne.emplacement,
         quantite,
         place_liberee: libere, // l'emplacement sera vide après la sortie
-      });
+      };
+      lignes.push(meme);
     }
+    if (infos) cumulerPieces(meme, piecesDe(infos.get(ligne.reception_id), quantite));
   }
   return lignes;
+}
+
+// Pièces des colis pris par une sortie (visibilité)
+async function piecesSortie(connexion, prelevements) {
+  return piecesParLigne(connexion, prelevements.map((p) => p.ligne.reception_id));
 }
 
 // GET /api/exports  -> historique des sorties, avec le détail (lot, emplacement)
@@ -117,10 +126,25 @@ router.get('/', async (req, res, next) => {
     const [exports] = await db.query(
       `SELECT e.id, DATE_FORMAT(e.date_export, '%Y-%m-%dT%H:%i:%s') AS date_export, e.reference, e.type,
               e.taille_bobine, e.quantite, e.destination, e.origine, e.motif_force, e.hors_fifo = 1 AS hors_fifo,
-              u.matricule AS utilisateur
+              u.matricule AS utilisateur,
+              su.colis AS urgence_colis, su.import_id AS urgence_import_id, iu.numero_livraison AS urgence_livraison, au.matricule AS urgence_autorise_par
        FROM exports e LEFT JOIN utilisateurs u ON u.id = e.utilisateur_id
+       LEFT JOIN sorties_urgentes su ON su.export_id = e.id
+       LEFT JOIN imports iu ON iu.id = su.import_id
+       LEFT JOIN utilisateurs au ON au.id = su.autorise_par
        ORDER BY e.date_export DESC, e.id DESC`
     );
+    // Sortie urgente : colis sorti pendant la réception de son import
+    for (const e of exports) {
+      const { urgence_colis, urgence_import_id, urgence_livraison, urgence_autorise_par } = e;
+      delete e.urgence_colis;
+      delete e.urgence_import_id;
+      delete e.urgence_livraison;
+      delete e.urgence_autorise_par;
+      e.urgence = urgence_colis === null || urgence_colis === undefined
+        ? null
+        : { colis: urgence_colis, import_id: urgence_import_id, numero_livraison: urgence_livraison, autorise_par: urgence_autorise_par };
+    }
     const [details] = await db.query(
       `SELECT export_id, lot, DATE_FORMAT(date_reception, '%Y-%m-%dT%H:%i:%s') AS date_reception, emplacement,
               CAST(SUM(quantite) AS SIGNED) AS quantite
@@ -141,11 +165,16 @@ router.get('/apercu', async (req, res, next) => {
     if (demande.erreur) return res.status(400).json({ message: demande.erreur });
     const sortie = calculerSortie(await stockSortie(db), demande.reference, demande.quantite);
     if (sortie.erreur) return res.status(409).json({ message: sortie.erreur, disponible: sortie.disponible ?? 0 });
+    const prelevements = versJson(sortie.prelevements, await piecesSortie(db, sortie.prelevements));
+    const total = {};
+    for (const p of prelevements) cumulerPieces(total, p.pieces === null ? null : { pieces: p.pieces, approx: p.pieces_approx });
     res.json({
       reference: demande.reference,
       quantite: demande.quantite,
       disponible: sortie.disponible,
-      prelevements: versJson(sortie.prelevements),
+      pieces: total.pieces ?? null, // pièces des colis qui sortiront
+      pieces_approx: total.pieces_approx ?? false,
+      prelevements,
     });
   } catch (err) { next(err); }
 });
@@ -161,14 +190,17 @@ router.get('/disponible', async (req, res, next) => {
     const stock = lignes.filter((l) => l.reference.toUpperCase() === reference);
     const total = stock.reduce((s, l) => s + l.quantite, 0);
     const groupes = [];
+    const infos = await piecesParLigne(db, stock.map((l) => l.reception_id));
     for (const { ligne: l } of R.planSortie(stock, total, lignes) || []) {
-      const meme = groupes.find((g) => g.lot === l.lot && g.date_reception === l.date_reception && g.emplacement === l.emplacement);
+      let meme = groupes.find((g) => g.lot === l.lot && g.date_reception === l.date_reception && g.emplacement === l.emplacement);
       if (meme) {
         meme.ids.push(l.id);
         meme.quantite += l.quantite;
       } else {
-        groupes.push({ ids: [l.id], lot: l.lot, date_reception: l.date_reception, emplacement: l.emplacement, quantite: l.quantite });
+        meme = { ids: [l.id], lot: l.lot, date_reception: l.date_reception, emplacement: l.emplacement, quantite: l.quantite };
+        groupes.push(meme);
       }
+      cumulerPieces(meme, piecesDe(infos.get(l.reception_id), l.quantite)); // pièces de ces colis (visibilité)
     }
     res.json({ reference, disponible: total, lignes: groupes });
   } catch (err) { next(err); }

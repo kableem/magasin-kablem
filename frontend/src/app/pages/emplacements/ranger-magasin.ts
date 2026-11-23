@@ -1,6 +1,7 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { EmplPipe } from './empl.pipe';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FiltresRanger, MouvementRanger, PersonneRanger, ReceptionService, SuiviRanger, formatNombre, libelleProduit } from '../../services/reception';
 import { LIBELLES_ROLES } from '../../services/utilisateur';
@@ -23,7 +24,7 @@ export const aujourdhui = () => dateLocale();
 // libéré) et les déplacements refusés par les contrôles. Fichiers Excel et PDF de l'historique.
 @Component({
   selector: 'app-ranger-magasin',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, EmplPipe],
   templateUrl: './ranger-magasin.html',
   styleUrl: './ranger-magasin.css',
 })

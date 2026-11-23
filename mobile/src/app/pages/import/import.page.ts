@@ -20,7 +20,7 @@ import { EnteteComponent } from '../../composants/entete.component';
           <a routerLink="/reception" class="etape">
             <span class="numero">1</span>
             <span class="icone reception"><ion-icon name="download-outline"></ion-icon></span>
-            <span class="texte"><strong>Réception</strong><small>Scanner le ticket vert : le produit est-il dans l'import ?</small></span>
+            <span class="texte"><strong>Réception</strong><small>Scanner chaque produit : lots, quantités et écarts, sans emplacement</small></span>
             <ion-icon class="fleche" name="chevron-forward"></ion-icon>
           </a>
         </li>
@@ -28,7 +28,7 @@ import { EnteteComponent } from '../../composants/entete.component';
           <a routerLink="/rangement" class="etape">
             <span class="numero">2</span>
             <span class="icone rangement"><ion-icon name="grid-outline"></ion-icon></span>
-            <span class="texte"><strong>Rangement</strong><small>Scanner l'emplacement, puis le produit posé</small></span>
+            <span class="texte"><strong>Rangement</strong><small>Après la validation de la réception : rescanner le produit, puis son emplacement</small></span>
             <ion-icon class="fleche" name="chevron-forward"></ion-icon>
           </a>
         </li>

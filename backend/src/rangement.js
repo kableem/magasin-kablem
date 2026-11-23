@@ -5,14 +5,15 @@
 // Zone tampon : places T01, T02… au sol devant les blocs A et B (nombre réglable).
 //
 // Règles :
-//  - Niveau 0 = bobines, niveaux 1-2 = cosses (et le niveau 3 du bloc E), autres niveaux = connecteurs.
+//  - Niveau 0 = bobines ; niveaux 1-2 (et 1-3 du bloc E) = cosses séparées (arrivées séparées, ou restes d'un carton
+//    ouvert à l'export) ; niveaux du haut (3-4, et 4-5 du bloc E) = connecteurs et palettes de cartons de cosses neufs
+//    (décision du 2026-11-12). Une palette de cartons de cosses est seule sur son emplacement.
 //  - Quantité N sur une ligne = N produits identiques, rangés un par un.
 //  - 1 emplacement (ou place tampon) = 1 palette : 1 grande bobine, 2 moyennes ou 6 petites
 //    (une seule taille par palette, références différentes autorisées) ;
 //    cosses : 10 plates et 3 axiales au maximum, comptées à part sur la même palette (références différentes autorisées) ;
-//    connecteurs : cartons de dimensions et poids variables (1 carton = 1 référence + 1 lot) ;
-//    une palette accepte un carton si le volume total, le poids total (15 kg par défaut)
-//    et la taille du carton restent dans les limites du niveau (réglables par l'administrateur).
+//    connecteurs (règle provisoire, en attendant les palettes de connecteurs) : un emplacement reçoit les cartons
+//    d'une seule référence et d'un seul lot, sans limite de nombre ; plus aucun calcul de volume ni de poids.
 //  - Choix de l'emplacement, dans cet ordre :
 //      1. palette non pleine, même référence et même lot
 //      2. palette non pleine, même référence
@@ -22,16 +23,18 @@
 //      5. sinon, emplacement vide le plus proche de la sortie
 //      6. zone tampon (plus de place à son niveau) : palette commencée compatible, sinon place vide
 //      7. aucune place, même en zone tampon : le produit ne peut pas être rangé
-//  - Connecteurs : règles 1 à 5 d'abord au niveau 3, puis au niveau 4 (élévateur) seulement
-//    si aucune place ne convient au niveau 3 ; ensuite zone tampon (limites du niveau 3).
+//  - Connecteurs : règles 1 et 5 d'abord au niveau 3, puis aux niveaux de l'élévateur (4, et 5 du bloc E)
+//    seulement si aucune place ne convient au niveau 3 ; ensuite zone tampon.
 
-const { TOUS, lireCode, typeEmplacement } = require('./plan');
+const { TOUS, lireCode, typeEmplacement, EMPLACEMENTS_BLOQUES } = require('./plan');
 
 // Niveaux de chaque type (bloc E : le niveau 3 est aussi pour les cosses)
-const NIVEAUX_PAR_TYPE = { bobine: [0], cosse: [1, 2, 3], connecteur: [3, 4] };
-const LIBELLE_NIVEAUX = { bobine: 'niveau 0', cosse: 'niveaux 1 et 2 (et 3 du bloc E)', connecteur: 'niveaux 3 et 4' };
+const NIVEAUX_PAR_TYPE = { bobine: [0], cosse: [1, 2, 3], connecteur: [3, 4, 5] }; // 5 : bloc E seulement
+const LIBELLE_NIVEAUX = { bobine: 'niveau 0', cosse: 'niveaux 1 et 2 (et 3 du bloc E)', connecteur: 'niveaux 3 et 4 (4 et 5 du bloc E)' };
+// Une palette de cartons de cosses se range en haut, avec les connecteurs ; une cosse séparée en bas
+const typeAttendu = (l) => (l.type === 'cosse' && l.palette_cosses_id ? 'connecteur' : l.type);
 // « se range au niveau 0 », « se range aux niveaux 1 et 2 »
-const AU_NIVEAU = { bobine: 'au niveau 0', cosse: 'aux niveaux 1 et 2 (et 3 du bloc E)', connecteur: 'aux niveaux 3 et 4' };
+const AU_NIVEAU = { bobine: 'au niveau 0', cosse: 'aux niveaux 1 et 2 (et 3 du bloc E)', connecteur: 'aux niveaux 3 et 4 (4 et 5 du bloc E)' };
 const BOBINES_PAR_PALETTE = { grande: 1, moyenne: 2, petite: 6 };
 const COSSES_PAR_PALETTE = 10; // cosses plates
 const COSSES_AXIALES_PAR_PALETTE = 3; // cosses axiales (petites) : sur la même palette que les plates, comptées à part
@@ -40,22 +43,11 @@ const LIBELLE_TAILLE = { grande: 'grande bobine', moyenne: 'bobines moyennes', p
 
 const TAMPON_MAX = 99;
 
-// Limites d'une palette de connecteurs (valeurs par défaut ; l'administrateur peut les changer)
-const LIMITES_CONNECTEUR_DEFAUT = {
-  longueur: 120, // cm
-  largeur: 80, // cm
-  hauteur_n3: 100, // cm, hauteur utile au niveau 3
-  hauteur_n4: 150, // cm, hauteur utile au niveau 4
-  taux: 85, // % du volume réellement utilisable
-  poids_max: 15, // kg par palette
-};
-
 const REGLES = {
   1: 'Palette commencée : même référence et même lot',
   2: 'Palette commencée : même référence',
   3: 'Palette commencée : même taille de bobine',
   '3c': 'Palette de cosses commencée : autre référence',
-  '3k': 'Palette de connecteurs commencée : autre référence',
   4: 'Emplacement vide près de la même référence',
   5: 'Emplacement vide le plus proche de la sortie',
   6: 'Zone tampon : plus de place libre à son niveau',
@@ -116,75 +108,15 @@ function emplacementsCosses() {
   );
 }
 
+// Niveaux du haut (connecteurs, palettes de cartons de cosses) : le niveau 3 d'abord, puis l'élévateur (4, et 5 du bloc E)
+function emplacementsHaut() {
+  return [...emplacementsParProximite(3, 'connecteur'), ...emplacementsParProximite(4, 'connecteur'), ...emplacementsParProximite(5, 'connecteur')];
+}
+
 // Emplacements d'un type de produit, dans l'ordre où on les remplit
 function emplacementsDuType(type) {
   if (type === 'cosse') return emplacementsCosses();
   return NIVEAUX_PAR_TYPE[type].flatMap((n) => emplacementsParProximite(n, type));
-}
-
-// ---------- Connecteurs : volume, poids, taille du carton ----------
-
-function niveauDe(code) {
-  return estTampon(code) ? 3 : lireCode(code)?.niveau;
-}
-
-// Limites d'une palette de connecteurs à cet emplacement (zone tampon : limites du niveau 3)
-function limitesPalette(code, limites = LIMITES_CONNECTEUR_DEFAUT) {
-  const hauteur = niveauDe(code) === 4 ? limites.hauteur_n4 : limites.hauteur_n3;
-  return {
-    longueur: limites.longueur,
-    largeur: limites.largeur,
-    hauteur,
-    volumeMax: (limites.longueur * limites.largeur * hauteur * limites.taux) / 100,
-    poidsMax: limites.poids_max,
-  };
-}
-
-const volumeCarton = (c) => Number(c.longueur) * Number(c.largeur) * Number(c.hauteur);
-const litres = (cm3) => Math.round(cm3 / 1000);
-const kg = (n) => Math.round(n * 10) / 10;
-const dims = (c) => `${Number(c.longueur)} × ${Number(c.largeur)} × ${Number(c.hauteur)} cm`;
-
-// Le carton tient-il sur la palette (posé tel quel, éventuellement tourné d'un quart de tour) ?
-function cartonRentre(c, lim) {
-  const L = Number(c.longueur), l = Number(c.largeur), h = Number(c.hauteur);
-  return h <= lim.hauteur && ((L <= lim.longueur && l <= lim.largeur) || (L <= lim.largeur && l <= lim.longueur));
-}
-
-// Raison pour laquelle un carton ne peut pas aller sur cette palette, ou null
-function refusConnecteur(carton, code, occupants, limites) {
-  const lim = limitesPalette(code, limites);
-  if (!cartonRentre(carton, lim)) {
-    return `le carton (${dims(carton)}) ne rentre pas en ${code} : palette ${lim.longueur} × ${lim.largeur} cm, hauteur utile ${lim.hauteur} cm`;
-  }
-  const poids = occupants.reduce((t, o) => t + Number(o.poids), 0) + Number(carton.poids);
-  if (poids > lim.poidsMax + 1e-9) {
-    return `${code} dépasserait ${lim.poidsMax} kg (${kg(poids - Number(carton.poids))} kg + ${kg(Number(carton.poids))} kg)`;
-  }
-  const volume = occupants.reduce((t, o) => t + volumeCarton(o), 0) + volumeCarton(carton);
-  if (volume > lim.volumeMax + 1e-6) {
-    return `${code} est plein en volume (${litres(volume - volumeCarton(carton))} L + ${litres(volumeCarton(carton))} L > ${litres(lim.volumeMax)} L)`;
-  }
-  return null;
-}
-
-// Contrôle d'un carton à la saisie : refusé s'il ne peut aller sur aucune palette, même vide
-function controlerCarton(c, limites = LIMITES_CONNECTEUR_DEFAUT) {
-  for (const champ of ['longueur', 'largeur', 'hauteur', 'poids']) {
-    const v = Number(c[champ]);
-    if (!Number.isFinite(v) || v <= 0) return `Carton : ${champ} invalide (nombre positif obligatoire)`;
-  }
-  if (Number(c.poids) > limites.poids_max) {
-    return `Carton refusé : ${kg(Number(c.poids))} kg dépasse la limite de ${limites.poids_max} kg par palette`;
-  }
-  const n3 = limitesPalette('D300', limites);
-  const n4 = limitesPalette('D400', limites);
-  const okN3 = cartonRentre(c, n3) && volumeCarton(c) <= n3.volumeMax;
-  const okN4 = cartonRentre(c, n4) && volumeCarton(c) <= n4.volumeMax;
-  if (!okN3 && !okN4) {
-    return `Carton refusé : ${dims(c)} ne rentre sur aucune palette (${limites.longueur} × ${limites.largeur} cm, hauteur utile ${limites.hauteur_n3} cm au niveau 3 et ${limites.hauteur_n4} cm au niveau 4)`;
-  }
-  return null;
 }
 
 // ---------- Palettes ----------
@@ -192,9 +124,10 @@ function controlerCarton(c, limites = LIMITES_CONNECTEUR_DEFAUT) {
 function capacite(ligne) {
   // Palette de réception posée entière : elle ne va que sur un emplacement entièrement vide
   if (ligne.palette_entiere) return 1;
+  if (ligne.palette_cosses_id) return Infinity; // palette de cartons de cosses : seule sur son emplacement, sans limite
   if (ligne.type === 'bobine') return BOBINES_PAR_PALETTE[ligne.taille_bobine] || 1;
   if (ligne.type === 'cosse') return estAxiale(ligne) ? COSSES_AXIALES_PAR_PALETTE : COSSES_PAR_PALETTE;
-  return Infinity; // connecteurs : limités par le volume et le poids, pas par un nombre
+  return Infinity; // connecteurs : pas de limite (règle provisoire : une seule référence et un seul lot par emplacement)
 }
 
 // Deux lignes peuvent partager une palette : bobines de même taille, cosses entre elles
@@ -204,7 +137,13 @@ function capacite(ligne) {
 const memeCompte = (unite, occupants) => (unite.type === 'cosse' ? occupants.filter((o) => estAxiale(o) === estAxiale(unite)) : occupants);
 
 function peutPartager(a, b) {
+  // Une palette de cosses (cartons et cosses séparées) est seule sur son emplacement : rien ne s'y ajoute
+  if ((a.palette_cosses_id ?? null) !== (b.palette_cosses_id ?? null)) return false;
   if (a.type === 'bobine' && b.type === 'bobine') return a.taille_bobine === b.taille_bobine;
+  // connecteurs (provisoire) : seulement la même référence et le même lot
+  if (a.type === 'connecteur' && b.type === 'connecteur') {
+    return String(a.reference).toUpperCase() === String(b.reference).toUpperCase() && String(a.lot) === String(b.lot);
+  }
   return a.type === b.type && a.type !== 'bobine';
 }
 
@@ -256,18 +195,17 @@ function etatMagasin(lignesRangees) {
   return contenu;
 }
 
-function placeLibre(unite, occupants, code, limites) {
+function placeLibre(unite, occupants) {
   if (occupants.length && !occupants.every((o) => peutPartager(o, unite))) return false;
-  if (unite.type === 'connecteur') return !refusConnecteur(unite, code, occupants, limites);
   return memeCompte(unite, occupants).length < capacite(unite);
 }
 
 // Règles 1 à 5 parmi des emplacements candidats ; null si aucun ne convient
-function chercherEnRayon(unite, contenu, candidats, limites) {
+function chercherEnRayon(unite, contenu, candidats) {
   const occ = (c) => contenu.get(c) ?? [];
 
   // Règles 1 à 3 : compléter une palette déjà commencée compatible, avec de la place restante
-  const commencees = candidats.filter((c) => occ(c).length && placeLibre(unite, occ(c), c, limites));
+  const commencees = candidats.filter((c) => occ(c).length && placeLibre(unite, occ(c)));
   const regles = [
     [1, (o) => o.some((x) => x.reference === unite.reference && x.lot === unite.lot)],
     [2, (o) => o.some((x) => x.reference === unite.reference)],
@@ -278,13 +216,12 @@ function chercherEnRayon(unite, contenu, candidats, limites) {
     if (code) {
       const choix = poser(unite, code, regle, contenu);
       if (regle === 3 && unite.type === 'cosse') choix.motif = REGLES['3c'];
-      if (regle === 3 && unite.type === 'connecteur') choix.motif = REGLES['3k'];
       return choix;
     }
   }
 
   // Règle 4 : emplacement vide près des palettes de la même référence (parmi les mêmes candidats)
-  const vides = candidats.filter((c) => !occ(c).length && placeLibre(unite, [], c, limites));
+  const vides = candidats.filter((c) => !occ(c).length && placeLibre(unite, []));
   const dansCandidats = new Set(candidats);
   const memeReference = [...contenu.entries()]
     .filter(([c, o]) => dansCandidats.has(c) && o.some((x) => x.reference === unite.reference))
@@ -303,22 +240,22 @@ function chercherEnRayon(unite, contenu, candidats, limites) {
 
 // Choisit l'emplacement d'une unité et met à jour l'état du magasin.
 // capaciteTampon = 0 : pas de zone tampon (l'unité reste sans place si le rayonnage est plein).
-function choisirEmplacement(unite, contenu, capaciteTampon, limites) {
+function choisirEmplacement(unite, contenu, capaciteTampon) {
   // Connecteurs : niveau 3 d'abord ; le niveau 4 (élévateur) seulement s'il ne reste rien au niveau 3
   const passes =
-    unite.type === 'connecteur'
-      ? [emplacementsParProximite(3, 'connecteur'), emplacementsParProximite(4, 'connecteur')]
+    typeAttendu(unite) === 'connecteur'
+      ? [emplacementsParProximite(3, 'connecteur'), [...emplacementsParProximite(4, 'connecteur'), ...emplacementsParProximite(5, 'connecteur')]]
       : [emplacementsDuType(unite.type)];
   for (const candidats of passes) {
-    const choix = chercherEnRayon(unite, contenu, candidats, limites);
+    const choix = chercherEnRayon(unite, contenu, candidats);
     if (choix) return choix;
   }
 
   // Règle 6 : zone tampon (palette commencée compatible, sinon place vide)
   const tampon = placesTampon(capaciteTampon);
   const code =
-    tampon.find((c) => (contenu.get(c) ?? []).length && placeLibre(unite, contenu.get(c), c, limites)) ??
-    tampon.find((c) => !(contenu.get(c) ?? []).length && placeLibre(unite, [], c, limites));
+    tampon.find((c) => (contenu.get(c) ?? []).length && placeLibre(unite, contenu.get(c))) ??
+    tampon.find((c) => !(contenu.get(c) ?? []).length && placeLibre(unite, []));
   if (code) return poser(unite, code, 6, contenu);
 
   // Règle 7 : aucune place
@@ -352,7 +289,7 @@ function regrouper(choix) {
 function proposerPlan(
   lignesARanger,
   lignesRangees,
-  { ordre = 'reference', capaciteTampon = 0, limites = LIMITES_CONNECTEUR_DEFAUT } = {}
+  { ordre = 'reference', capaciteTampon = 0 } = {}
 ) {
   const contenu = etatMagasin(lignesRangees);
   const tri =
@@ -360,13 +297,13 @@ function proposerPlan(
       ? (a, b) => ordreFifo(a, b)
       : (a, b) => a.reference.localeCompare(b.reference, 'fr', { numeric: true }) || ordreFifo(a, b);
   const unites = deplier([...lignesARanger].sort(tri));
-  return regrouper(unites.map((u) => choisirEmplacement(u, contenu, capaciteTampon, limites)));
+  return regrouper(unites.map((u) => choisirEmplacement(u, contenu, capaciteTampon)));
 }
 
 // Vérifie un plan [{ id, emplacement, quantite }] (éventuellement modifié par l'administrateur) :
 // chaque ligne doit être entièrement rangée, et chaque unité respecter les règles.
 // Renvoie un message d'erreur ou null.
-function verifierPlan(plan, lignesARanger, lignesRangees, capaciteTampon, limites = LIMITES_CONNECTEUR_DEFAUT) {
+function verifierPlan(plan, lignesARanger, lignesRangees, capaciteTampon) {
   const parId = new Map(lignesARanger.map((l) => [l.id, l]));
   const contenu = etatMagasin(lignesRangees);
   const totaux = new Map();
@@ -385,18 +322,26 @@ function verifierPlan(plan, lignesARanger, lignesRangees, capaciteTampon, limite
         : `L'emplacement ${emplacement} n'existe pas dans le magasin`;
     }
     const e = lireCode(emplacement);
-    if (e && typeEmplacement(emplacement) !== ligne.type) {
+    if (e && typeEmplacement(emplacement) === 'bloque') {
+      return `On ne pose rien en ${emplacement} : ${EMPLACEMENTS_BLOQUES.get(emplacement)}`;
+    }
+    if (e && typeEmplacement(emplacement) === 'bobine_wip') {
+      return `${emplacement} (bloc ${e.bloc}, niveau 0) sert au stockage des bobines WIP : les bobines des imports vont dans les blocs A à D`;
+    }
+    if (e && typeEmplacement(emplacement) !== typeAttendu(ligne)) {
+      if (ligne.type === 'cosse' && ligne.palette_cosses_id) {
+        return `Une palette de cartons de cosses se range en haut (${LIBELLE_NIVEAUX.connecteur}), pas en ${emplacement}`;
+      }
+      if (ligne.type === 'cosse') return `Les cosses séparées se rangent ${AU_NIVEAU.cosse}, pas en ${emplacement}`;
       return `${ligne.reference} (${ligne.type}) se range ${AU_NIVEAU[ligne.type]}, pas en ${emplacement}`;
     }
     for (let k = 0; k < n; k++) {
       const occ = contenu.get(emplacement) ?? [];
       if (occ.length && !occ.every((o) => peutPartager(o, ligne))) {
+        if (occ.some((o) => o.palette_cosses_id)) return `${emplacement} contient une palette de cosses (${occ[0].reference}${occ.length > 1 ? '…' : ''}) : on n'y ajoute rien`;
         return `${emplacement} contient déjà ${occ[0].reference} : impossible d'y mettre ${ligne.reference}`;
       }
-      if (ligne.type === 'connecteur') {
-        const refus = refusConnecteur(ligne, emplacement, occ, limites);
-        if (refus) return `${ligne.reference} (lot ${ligne.lot}) : ${refus}`;
-      } else if (memeCompte(ligne, occ).length >= capacite(ligne)) {
+      if (ligne.type !== 'connecteur' && memeCompte(ligne, occ).length >= capacite(ligne)) {
         if (ligne.type === 'bobine') {
           return `${emplacement} est plein : une palette contient au maximum ${capacite(ligne)} ${LIBELLE_TAILLE[ligne.taille_bobine]}`;
         }
@@ -430,6 +375,8 @@ function ordreSortie(a, b, remplissage = new Map()) {
   return (
     comparerLots(a.lot, b.lot) ||
     ((a.date_reception || '') < (b.date_reception || '') ? -1 : (a.date_reception || '') > (b.date_reception || '') ? 1 : 0) ||
+    // même lot, même date : les cosses séparées d'abord (on n'ouvre un carton neuf que s'il le faut)
+    (a.palette_cosses_id ? 1 : 0) - (b.palette_cosses_id ? 1 : 0) ||
     groupe(a) - groupe(b) ||
     plein(a) - plein(b) ||
     distance(a.emplacement) - distance(b.emplacement) ||
@@ -467,11 +414,6 @@ module.exports = {
   COSSES_PAR_PALETTE,
   COSSES_AXIALES_PAR_PALETTE,
   estAxiale,
-  LIMITES_CONNECTEUR_DEFAUT,
-  limitesPalette,
-  volumeCarton,
-  controlerCarton,
-  refusConnecteur,
   codeTampon,
   estTampon,
   placesTampon,
@@ -481,6 +423,8 @@ module.exports = {
   distance,
   emplacementsParProximite,
   emplacementsDuType,
+  emplacementsHaut,
+  typeAttendu,
   capacite,
   peutPartager,
   comparerLots,

@@ -143,6 +143,12 @@ tfoot small { font-weight: 400; color: var(--gris); }
 }
 .ref-export .dispo { font-size: 14px; color: var(--gris); }
 .btn-export { margin-left: auto; padding: 8px 14px; }
+/* Pièces des colis (visibilité seulement) */
+.pieces { color: var(--nuit); white-space: nowrap; }
+.carton-ligne { display: block; margin-top: 3px; font-size: 11.5px; font-weight: 700; color: #9a5205; }
+.pieces.inconnu { color: var(--gris); }
+.pieces .partiel { display: block; font-size: 11px; color: var(--gris); }
+.pieces-sortie { margin: 8px 0 0; text-align: right; font-size: 13.5px; color: var(--gris); }
 .btn-export svg { width: 17px; }
 .modale-export { max-width: 560px; }
 /* Longue liste (sans FIFO) : la fenêtre défile, les boutons restent visibles en bas */

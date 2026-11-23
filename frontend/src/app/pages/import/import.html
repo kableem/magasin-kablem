@@ -6,10 +6,16 @@
       </span>
       Import
     </h1>
-    <p>Les imports arrivent de la base de l'Italie. « Synchroniser » récupère les nouveaux. Après la réception mobile, chaque produit entre dans le stock quand le magasinier le range (scan du ticket puis de l'emplacement).</p>
+    <p>Deux étapes séparées. <b>1 · Réception</b> : sur le mobile, chaque produit est scanné (produit, lot, quantités) et les écarts sont réglés, puis la réception est validée. <b>2 · Rangement</b> : ensuite seulement, chaque produit est rescanné puis posé sur son emplacement ; il entre alors dans le stock.</p>
   </div>
   <div class="synchro">
     <div class="boutons-synchro">
+    @if (estAdmin()) {
+      <button type="button" class="btn btn-secondaire" (click)="saisieResume.set(true)" title="Fichier de l'Italie avec seulement la référence et le total de pièces (sans lot ni colis)">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" /></svg>
+        Import par référence
+      </button>
+    }
     @if (estAdministrateur()) {
       <button type="button" class="btn btn-secondaire" (click)="saisieManuelle.set(true)">
         <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
@@ -34,6 +40,10 @@
     </small>
   </div>
 </div>
+
+@if (saisieResume()) {
+  <app-import-resume (fermer)="saisieResume.set(false)" (cree)="apresImportResume($event)"></app-import-resume>
+}
 
 @if (saisieManuelle()) {
   <app-import-manuel (fermer)="saisieManuelle.set(false)" (cree)="apresSaisieManuelle($event)"></app-import-manuel>
@@ -106,6 +116,7 @@
 <!-- Liste des imports, du plus récent au plus ancien -->
 @for (i of filtres(); track i.id) {
   <article class="import" [attr.data-statut]="i.statut" [class.ouvert]="estOuvert(i)">
+    <div class="ligne-entete">
     <button type="button" class="import-entete" (click)="basculer(i)">
       <span class="date">
         <strong>{{ i.date_creation | date: 'dd/MM/yyyy' }}</strong>
@@ -142,9 +153,13 @@
         <span class="statut statut-etape" [attr.data-etape]="i.etape"><svg viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z" /></svg>{{ etapes[i.etape] }}</span>
       }
       @if (i.statut === 'en_attente' && i.avancement && i.avancement.attendus) {
-        <span class="progression-reception" [title]="i.avancement.recus + ' produit(s) reçu(s) sur ' + i.avancement.attendus + ' (scans du mobile)'">
+        <span class="progression-reception" [title]="i.pieces ? nombre(i.pieces.recues) + ' pièce(s) reçue(s) sur ' + nombre(i.avancement.attendus) + ' annoncées (scans du mobile)' : i.avancement.recus + ' produit(s) reçu(s) sur ' + i.avancement.attendus + ' (scans du mobile)'">
           <span class="barre-reception"><i [style.width.%]="pourcentReception(i)"></i></span>
-          <small><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }} reçus</small>
+          @if (i.pieces) {
+            <small><b>{{ nombre(i.avancement.recus) }}</b>/{{ nombre(i.avancement.attendus) }} pièces</small>
+          } @else {
+            <small><b>{{ i.avancement.recus }}</b>/{{ i.avancement.attendus }} reçus</small>
+          }
         </span>
       }
 
@@ -158,14 +173,231 @@
 
       <span class="total-import">
         <strong>{{ nombre(total(i)) }}</strong>
-        <small>{{ i.produits.length }} produit(s)</small>
+        <small>{{ i.pieces ? 'pièces · ' + i.pieces.references.length + ' référence(s)' : i.produits.length + ' produit(s)' }}</small>
       </span>
 
       <svg viewBox="0 0 24 24" class="chevron"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" /></svg>
     </button>
+    <!-- Pointage de l'import en PDF (annoncées, reçues, écart, lots, bilan), sans ouvrir l'import -->
+    <button type="button" class="btn-pdf-import" [disabled]="impression() === i.id || !total(i)" (click)="pointagePdf(i)" [title]="'Pointage de ' + (i.numero_livraison || 'cet import') + ' en PDF'">
+      <svg viewBox="0 0 24 24"><path d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-8.5 7.5c0 .83-.67 1.5-1.5 1.5H9v2H7.5V7H10c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V7H15c.83 0 1.5.67 1.5 1.5v3zm4-3H19v1h1.5V11H19v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z" /></svg>
+      {{ impression() === i.id ? '…' : 'PDF' }}
+    </button>
+    </div>
 
     @if (estOuvert(i)) {
       <div class="import-corps">
+        <!-- Les deux étapes, séparées : réception (contrôle et écarts), puis rangement -->
+        <div class="deux-etapes">
+          <div class="etape-processus" [attr.data-etat]="etatReception(i)">
+            <span class="num">1</span>
+            <div><strong>Réception</strong><small>{{ texteReception(i) }}</small></div>
+          </div>
+          <svg class="fleche-etapes" viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>
+          <div class="etape-processus" [attr.data-etat]="etatRangement(i)">
+            <span class="num">2</span>
+            <div><strong>Rangement</strong><small>{{ texteRangement(i) }}</small></div>
+          </div>
+        </div>
+        <!-- Import par référence : total de pièces annoncé, et ce qu'en donnent les tickets scannés -->
+        @if (i.pieces; as pc) {
+          <p class="explication-resume">
+            Import par référence : l'Italie annonce le <b>total de pièces</b> de chaque référence. Les lots et les colis viennent des tickets scannés ;
+            tout écart devient une réclamation.
+          </p>
+          <div class="table-defilante">
+            <table class="table-references">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Référence</th>
+                  <th class="droite">Annoncées</th>
+                  <th class="droite">Reçues</th>
+                  <th class="droite">Écart</th>
+                  <th>Lots reçus (colis)</th>
+                  <th>Bilan</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (r of pc.references; track r.reference) {
+                  <tr [attr.data-statut]="r.statut" [class.trouve]="filtreProduitActif() && correspondReference(r)">
+                    <td><span class="badge-type" [attr.data-type]="r.type">{{ libelle(r) }}</span></td>
+                    <td class="code ref">{{ r.reference }}</td>
+                    <td class="droite"><strong>{{ nombre(r.attendues) }}</strong></td>
+                    <td class="droite"><strong>{{ nombre(r.recues) }}</strong><small class="colis-ref">{{ r.colis }} colis</small></td>
+                    <td class="droite ecart-ref">{{ libelleEcart(r) || '—' }}</td>
+                    <td class="lots-ref">
+                      @for (l of r.lots; track l.lot) {
+                        <span class="code" [title]="nombre(l.pieces) + ' pièces'">{{ l.lot }} <small>×{{ l.colis }}</small></span>
+                      } @empty {
+                        —
+                      }
+                    </td>
+                    <td><span class="bilan-ref" [attr.data-statut]="r.statut">{{ statutsReference[r.statut] }}</span></td>
+                  </tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="2">Total <small>({{ pc.references.length }} référence(s))</small></td>
+                  <td class="droite"><strong>{{ nombre(pc.attendues) }}</strong></td>
+                  <td class="droite"><strong>{{ nombre(pc.recues) }}</strong><small class="colis-ref">{{ i.avancement?.colis_recus ?? 0 }} colis</small></td>
+                  <td colspan="3">
+                    @if (pc.a_reclamer) {
+                      <small>{{ pc.a_reclamer }} référence(s) hors de l'écart accepté{{ i.reception === 'terminee' ? '' : ' pour l\'instant' }}</small>
+                    }
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          @if (i.produits.length) {
+            <h3 class="titre-lots">Lignes créées au scan (une par référence et par lot)</h3>
+          }
+        }
+        <!-- Palettes de cosses : plusieurs cartons (et des cosses séparées) par palette ; étiquette de chaque carton imprimée ici -->
+        @if (i.cartons.length || i.palettes_cosses.length) {
+          <div class="cartons-import">
+            <div class="entete-cartons">
+              <h3 class="titre-lots">Palettes de cosses ({{ i.palettes_cosses.length }}) · {{ i.cartons.length }} carton(s)</h3>
+              <button type="button" class="btn btn-principal petit" [disabled]="impression() === i.id || !cartonsImprimables(i)" (click)="imprimerCartons(i)">
+                <svg viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" /></svg>
+                {{ cartonsAImprimer(i) ? 'Imprimer les ' + cartonsAImprimer(i) + ' étiquette(s) à imprimer' : 'Réimprimer toutes les étiquettes' }}
+              </button>
+            </div>
+            <p class="aide-impression">
+              Une palette se range entière sur un emplacement vide : au rangement, on scanne l'étiquette de n'importe quel carton de la palette (ou le ticket d'une cosse), puis l'emplacement.
+              Étiquette 115 × 75 mm (taille du ticket vert) : papier 115 × 75 mm et échelle « Taille réelle » (100 %).
+            </p>
+            @for (g of groupesCartons(i); track g.palette?.id ?? 0) {
+              <div class="palette-cosses" [attr.data-statut]="g.palette?.statut ?? 'sans'">
+                <div class="palette-tete">
+                  <span class="palette-icone" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M2 18h20v2H2zm1-2h4v-4H3zm6 0h6v-4H9zm8 0h4v-4h-4zM3 10h8V4H3zm10 0h8V4h-8z" /></svg>
+                  </span>
+                  @if (g.palette; as p) {
+                    <span class="palette-titre">
+                      <strong>Palette n° {{ p.numero }}</strong>
+                      <small>{{ p.contenu }}{{ p.pieces !== null ? ' · ' + nombre(p.pieces) + ' pièces' : '' }}</small>
+                    </span>
+                    @if (p.statut === 'rangee' && p.en_stock < p.cosses) {
+                      <span class="palette-reste">{{ p.en_stock }}/{{ p.cosses }} cosses restantes</span>
+                    }
+                    <span class="bilan-ref" [attr.data-statut]="etatPalette(p).ton">
+                      {{ p.statut === 'rangee' && p.en_stock ? 'Rangée en ' + (p.emplacement | empl) : etatPalette(p).texte }}
+                    </span>
+                  } @else {
+                    <span class="palette-titre"><strong>Cartons sans palette</strong><small>reçus avant les palettes</small></span>
+                  }
+                </div>
+                @if (g.cartons.length) {
+                  <div class="table-defilante">
+                    <table class="table-cartons">
+                      <thead>
+                        <tr><th>Carton</th><th>Référence</th><th>Lot</th><th class="droite">Cosses</th><th class="droite">Pièces</th><th>Étiquette</th><th>État</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        @for (c of g.cartons; track c.id) {
+                          <tr [attr.data-statut]="c.statut">
+                            <td><strong>n° {{ c.numero }}</strong></td>
+                            <td class="code ref">{{ c.reference ?? '—' }}</td>
+                            <td class="code">{{ c.lot ?? '—' }}</td>
+                            <td class="droite">
+                              <strong>{{ c.statut === 'range' ? c.en_stock + '/' + c.cosses : c.cosses }}</strong>
+                              @if (c.statut === 'range' && c.en_stock < c.cosses) { <small class="colis-ref">{{ c.cosses - c.en_stock }} sortie(s)</small> }
+                            </td>
+                            <td class="droite">{{ c.pieces === null ? '—' : nombre(c.pieces) }}</td>
+                            <td class="date">{{ c.date_etiquette ?? 'pas imprimée' }}</td>
+                            <td>
+                              <span class="bilan-ref" [attr.data-statut]="c.statut === 'range' ? 'conforme' : c.imprime ? 'tolere' : 'en_trop'">
+                                @switch (c.statut) {
+                                  @case ('ouvert') { Ouvert (réception en cours) }
+                                  @case ('termine') { {{ c.imprime ? 'Étiquette imprimée' : 'À imprimer' }} }
+                                  @default { {{ c.en_stock ? 'Rangé en ' + (c.emplacement | empl) : 'Vide (tout est sorti)' }} }
+                                }
+                              </span>
+                            </td>
+                            <td class="droite">
+                              @if (c.statut !== 'ouvert') {
+                                <button type="button" class="lien-btn" [disabled]="impression() === i.id" (click)="imprimerCarton(i, c.id)">{{ c.imprime ? 'Réimprimer' : 'Imprimer' }}</button>
+                              }
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                }
+                @if (g.palette?.separees?.length) {
+                  <div class="palette-separees">
+                    <span class="etiquette-separees">{{ g.palette!.nb_separees }} cosse(s) séparée(s) sur la palette</span>
+                    @for (s of g.palette!.separees; track s.controle_id) {
+                      <span class="puce-separee"><b class="code">{{ s.reference }}</b> lot {{ s.lot }}{{ s.colis ? ' · colis ' + s.colis : '' }}{{ s.pieces !== null ? ' · ' + nombre(s.pieces) + ' pc' : '' }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+        <!-- Reçus hors import, référence absente du catalogue : ils entrent au stock une fois la référence ajoutée -->
+        @if (i.hors_import_en_attente.length) {
+          <div class="hors-import-attente">
+            <span>
+              <b>Reçus hors import, pas encore au stock</b> (référence absente du catalogue Articles) :
+              @for (h of i.hors_import_en_attente; track h.reference; let dernier = $last) {
+                <span class="code">{{ h.reference }}</span> ×{{ h.colis }}{{ dernier ? '' : ', ' }}
+              }
+              . Ajoutez la référence dans la page Articles, puis :
+            </span>
+            @if (estAdmin()) {
+              <button type="button" class="btn btn-secondaire petit" [disabled]="occupe() === i.id" (click)="entrerHorsImport(i)">Entrer au stock</button>
+            }
+          </div>
+        }
+        <!-- Sorties urgentes : la production attendait ces colis ; contrôlés, posés près de la porte puis sortis (mobile) -->
+        @if (i.urgences.length) {
+          <div class="urgences-import">
+            <h3 class="titre-lots">Sorties urgentes pendant la réception ({{ i.urgences.length }})</h3>
+            <div class="table-defilante">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Colis</th>
+                    <th>Référence</th>
+                    <th>Lot</th>
+                    <th>Destination</th>
+                    <th>État</th>
+                    <th>FIFO</th>
+                    <th>Magasinier</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (u of i.urgences; track u.id) {
+                    <tr>
+                      <td>n° {{ u.colis }}</td>
+                      <td class="code">{{ u.reference }}</td>
+                      <td>{{ u.lot }}</td>
+                      <td><span class="destination-urgence">{{ u.destination }}</span></td>
+                      <td>
+                        @switch (u.statut) {
+                          @case ('sortie') { <span class="etat-urgence sortie">Sorti en urgence</span> }
+                          @case ('posee') { <span class="etat-urgence attente">Posé en {{ u.emplacement | empl }}, pas encore sorti</span> }
+                          @case ('a_poser') { <span class="etat-urgence attente">Reçu, à poser près de la porte</span> }
+                          @default { <span class="etat-urgence annulee">Annulée · resté au stock en {{ u.emplacement | empl }}</span> }
+                        }
+                      </td>
+                      <td>{{ u.autorise_par ? 'Hors FIFO, autorisé par ' + u.autorise_par :'Référence absente du stock' }}</td>
+                      <td>{{ u.par ?? '—' }}</td>
+                      <td>{{ (u.date_sortie ?? u.date_demande) | date: 'dd/MM/yyyy HH:mm' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
         <!-- Produits de l'import -->
         @if (i.produits.length) {
           <div class="table-defilante">
@@ -191,9 +423,6 @@
                   <tr [class.trouve]="filtreProduitActif() && correspond(p)">
                     <td>
                       <span class="badge-type" [attr.data-type]="p.type">{{ libelle(p) }}</span>
-                      @if (p.type === 'connecteur' && p.longueur) {
-                        <small class="mesures">Carton {{ mesures(p) }}</small>
-                      }
                     </td>
                     <td class="code ref">{{ p.reference }}</td>
                     <td class="code">{{ p.lot }}</td>
@@ -228,9 +457,9 @@
                             [class.range]="a.range"
                             [disabled]="a.range || !estAdmin()"
                             (click)="ouvrirChangementColis(p, a)"
-                            [title]="a.range ? 'Colis n° ' + a.colis + ' rangé en ' + a.emplacement + ' (au stock)' : estAdmin() ? 'Changer l\'emplacement du colis n° ' + a.colis : 'Colis n° ' + a.colis + ' à ranger en ' + a.emplacement"
+                            [title]="a.range ? 'Colis n° ' + a.colis + ' rangé en ' + (a.emplacement | empl) + ' (au stock)' : estAdmin() ? 'Changer l\'emplacement du colis n° ' + a.colis : 'Colis n° ' + a.colis + ' à ranger en ' + (a.emplacement | empl)"
                           >
-                            <b>{{ a.palette ? 'P' + a.palette + ' · ' : '' }}n° {{ a.colis }}</b><span>{{ a.emplacement }}</span>
+                            <b>{{ a.palette ? 'P' + a.palette + ' · ' : '' }}n° {{ a.colis }}</b><span>{{ a.emplacement | empl }}</span>
                             @if (a.range) {
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
                             }
@@ -319,10 +548,16 @@
                 @for (a of i.avancement!.anomalies; track $index) {
                   <li [attr.data-type]="a.type">
                     <span class="type-ecart">{{ libellesAnomalie[a.type] }}</span>
-                    <span class="code">{{ a.reference }}</span> lot <span class="code">{{ a.lot }}</span>
-                    <b>× {{ a.quantite }}</b>
-                    @if (a.type !== 'manquant') {
-                      <small>mis de côté, hors stock</small>
+                    @if (a.unite === 'pieces') {
+                      <span class="code">{{ a.reference }}</span>
+                      <b>{{ a.type === 'pieces_en_trop' ? '+' : '−' }} {{ nombre(a.quantite) }} pièces</b>
+                      <small>{{ nombre(a.recues ?? 0) }} reçues / {{ nombre(a.attendues ?? 0) }} annoncées ({{ a.colis }} colis)</small>
+                    } @else {
+                      <span class="code">{{ a.reference }}</span> lot <span class="code">{{ a.lot }}</span>
+                      <b>× {{ a.quantite }}</b>
+                      @if (a.type === 'en_trop' || a.type === 'hors_import') {
+                        <small>mis de côté, hors stock</small>
+                      }
                     }
                   </li>
                 }
@@ -358,7 +593,11 @@
               } @else {
                 <span class="attente-mobile">
                   <svg viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z" /></svg>
-                  {{ i.avancement?.recus ?? 0 }}/{{ i.avancement?.attendus ?? 0 }} reçus
+                  @if (i.pieces) {
+                    {{ nombre(i.avancement?.recus ?? 0) }}/{{ nombre(i.avancement?.attendus ?? 0) }} pièces reçues
+                  } @else {
+                    {{ i.avancement?.recus ?? 0 }}/{{ i.avancement?.attendus ?? 0 }} reçus
+                  }
                 </span>
                 @if (estAdmin()) {
                   <button
@@ -386,6 +625,18 @@
             }
             Cet import ne peut plus être modifié.
           </p>
+        }
+        @if (estAdministrateur()) {
+          <div class="zone-suppression">
+            <button type="button" class="lien-btn supprimer-import" (click)="ouvrirSuppression(i)" title="Administrateur : effacer cet import (et ses produits encore en stock)">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
+              Supprimer cet import
+            </button>
+            <button type="button" class="lien-btn supprimer-import complet" (click)="ouvrirSuppression(i, true)" title="Administrateur : effacer l'import avec toutes ses données (stock, historique des emplacements, scans du mobile)">
+              <svg viewBox="0 0 24 24"><path d="M15 16h4v2h-4zm0-8h7v2h-7zm0 4h6v2h-6zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12z" /></svg>
+              Supprimer avec toutes ses données
+            </button>
+          </div>
         }
       </div>
     }
@@ -471,7 +722,7 @@
                       [class.lecture]="!estAdmin()"
                       [class.tampon]="estTampon(p.emplacement)"
                       [attr.list]="estAdmin() ? 'choix-' + idx : null"
-                      [value]="p.emplacement ?? ''"
+                      [value]="p.emplacement | empl"
                       placeholder="—"
                       (change)="modifierPlacement(idx, $any($event.target).value)"
                       maxlength="6"
@@ -479,7 +730,7 @@
                     />
                     <datalist [id]="'choix-' + idx">
                       @for (code of choixEmplacements(p); track code) {
-                        <option [value]="code"></option>
+                        <option [value]="code | empl"></option>
                       }
                     </datalist>
                     @if (rang.get(p.emplacement ?? ''); as r) {
@@ -557,7 +808,7 @@
         <span class="code">{{ cible.produit.lot }}</span>
       </p>
       <p class="trajet-colis">
-        Emplacement imposé actuel <span class="empl-actuel">{{ cible.affectation.emplacement }}</span>
+        Emplacement imposé actuel <span class="empl-actuel">{{ cible.affectation.emplacement | empl }}</span>
         → le magasinier devra le ranger au nouvel emplacement.
       </p>
 
@@ -643,6 +894,89 @@
         <button type="button" class="btn btn-secondaire" (click)="aReclamer.set(null)">Fermer</button>
         <button type="submit" class="btn btn-principal" [disabled]="enregistrementReclamation()">
           {{ enregistrementReclamation() ? 'Enregistrement…' : 'Enregistrer la réclamation' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}
+
+<!-- Suppression d'un import (administrateur) : ce qui sera effacé, motif, puis le n° tapé pour confirmer -->
+@if (aSupprimer(); as i) {
+  <div class="fond" (click)="aSupprimer.set(null)">
+    <form class="modale modale-suppression" (click)="$event.stopPropagation()" (ngSubmit)="supprimer()" novalidate>
+      <div class="modale-entete">
+        <h2>{{ suppressionComplete() ? 'Supprimer avec toutes ses données' : 'Supprimer' }} l'import {{ i.numero_livraison ?? 'n° ' + i.id }} ?</h2>
+        <button type="button" class="icone-btn" (click)="aSupprimer.set(null)" aria-label="Fermer">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+        </button>
+      </div>
+
+      @if (bilanSuppression(); as b) {
+        <div class="avertissement-suppression">
+          <strong>Cette suppression est définitive.</strong>
+          <ul>
+            <li>L'import et ses <b>{{ b.lignes }}</b> ligne(s) sont effacés{{ b.statut === 'en_attente' && b.reception !== 'non_commencee' ? ' (la réception mobile en cours est abandonnée)' : '' }}.</li>
+            @if (b.produits_en_stock) {
+              <li>
+                <b>{{ nombre(b.produits_en_stock) }} produit(s) sont retirés du stock</b>
+                @if (b.emplacements.length) {
+                  : {{ b.emplacements.length }} emplacement(s) ({{ nomsEmplacements(b.emplacements.slice(0, 12)) }}{{ b.emplacements.length > 12 ? '…' : '' }})
+                }
+                {{ b.non_ranges ? ' · ' + b.non_ranges + ' non rangé(s)' : '' }}.
+              </li>
+            } @else {
+              <li>Aucun produit de cet import n'est en stock.</li>
+            }
+            @if (b.reclamations) {
+              <li>{{ b.reclamations }} réclamation(s) effacée(s).</li>
+            }
+            @if (suppressionComplete()) {
+              <li><b>Toutes ses traces sont effacées</b> : {{ b.historique }} ligne(s) d'historique des emplacements et {{ b.scans }} scan(s) du mobile. Aucune copie n'est gardée.</li>
+            }
+          </ul>
+          @if (suppressionComplete()) {
+            <small>
+              Gardées : les sorties déjà faites vers la production{{ b.sorties_faites ? ' (' + nombre(b.sorties_faites) + ' produit(s))' : '' }}, et une ligne qui note qui a supprimé l'import, quand et pourquoi.
+            </small>
+          } @else {
+          <small>
+            Gardés : l'historique des sorties{{ b.sorties_faites ? ' (' + nombre(b.sorties_faites) + ' produit(s) déjà sortis)' : '' }} et des déplacements,
+            les {{ b.scans }} scan(s) du mobile. Le retrait du stock est noté dans l'historique des emplacements, avec votre motif, et une copie de l'import est conservée.
+          </small>
+          }
+        </div>
+
+        @if (b.sorties_en_cours.length) {
+          <p class="erreur">
+            Une sortie en cours sur le mobile utilise des produits de cet import ({{ b.sorties_en_cours[0].reference }}{{ b.sorties_en_cours[0].par ? ', matricule ' + b.sorties_en_cours[0].par : '' }}) :
+            terminez-la ou annulez-la d'abord.
+          </p>
+        }
+
+        <label class="champ-suppression">
+          Motif <b class="obligatoire">*</b>
+          <textarea name="motifSuppression" rows="2" maxlength="255" placeholder="ex. import en double, erreur de saisie, livraison annulée…" [(ngModel)]="motifSuppression"></textarea>
+        </label>
+        <label class="champ-suppression">
+          Pour confirmer, tapez <b class="code">{{ b.confirmation }}</b>
+          <input name="confirmationSuppression" class="code" autocomplete="off" [(ngModel)]="confirmationSuppression" />
+        </label>
+      } @else if (!erreurSuppression()) {
+        <p class="aide-reclamer">Calcul de ce qui sera effacé…</p>
+      }
+
+      @if (erreurSuppression()) {
+        <p class="erreur">{{ erreurSuppression() }}</p>
+      }
+
+      <div class="modale-pied">
+        <button type="button" class="btn btn-secondaire" (click)="aSupprimer.set(null)">Annuler</button>
+        <button
+          type="submit"
+          class="btn btn-danger"
+          [disabled]="suppressionEnCours() || !bilanSuppression() || !!bilanSuppression()?.sorties_en_cours?.length || motifSuppression.trim().length < 3 || !confirmationValide()"
+        >
+          {{ suppressionEnCours() ? 'Suppression…' : 'Supprimer définitivement' }}
         </button>
       </div>
     </form>

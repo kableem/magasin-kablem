@@ -8,7 +8,6 @@ import {
   LotDisponible,
   MOTIFS_DEPLACEMENT,
   MotifChangement,
-  LimitesConnecteurs,
   DESTINATIONS_EXPORT,
   VerificationStock,
   DestinationExport,
@@ -27,6 +26,7 @@ import {
   RANG_PROXIMITE,
   codeDuNumero,
   typeEmplacement,
+  EMPLACEMENTS_BLOQUES,
   NUMEROS_MAGASIN,
   TOUS_LES_EMPLACEMENTS,
   estTampon,
@@ -101,22 +101,24 @@ export class Stock implements OnInit {
   });
 
   // Emplacements où la ligne peut aller : niveau prévu pour son type
-  // (bobines : 0, cosses : 1-2, connecteurs : 3-4) et place sur la palette
-  // (1 grande bobine, 2 moyennes ou 6 petites de même taille ; 1 palette de cosses / connecteurs)
+  // (bobines : 0, cosses séparées : 1-2, connecteurs et palettes de cartons de cosses neufs : 3-4) et place sur la palette
+  // (1 grande bobine, 2 moyennes ou 6 petites de même taille ; une palette de cartons de cosses : un emplacement vide)
   readonly emplacementsLibres = computed(() => {
     const ligne = this.aAffecter();
     if (!ligne) return [];
     const occupants = this.occupants();
-    // Connecteurs : volume, poids et hauteur du niveau (sans compter la ligne elle-même)
-    const accepte = (code: string, niveau: number) => {
+    // Connecteurs (provisoire) : seulement la même référence et le même lot (sans compter la ligne elle-même)
+    const enHaut = ligne.type === 'connecteur' || !!ligne.palette_cosses_id; // palette de cartons : en haut
+    const accepte = (code: string, _niveau: number) => {
       const occ = (occupants.get(code) ?? []).filter((o) => o.id !== ligne.id);
+      if (ligne.palette_cosses_id) return occ.every((o) => o.palette_cosses_id === ligne.palette_cosses_id); // 1 emplacement = 1 palette
       return ligne.type === 'connecteur'
-        ? placeConnecteur(ligne, occ, niveau, this.limites())
+        ? placeConnecteur(ligne, occ)
         : placeDisponible(ligne, occupants.get(code) ?? []);
     };
     // Du plus proche au plus loin de la porte, puis la zone tampon
     return [
-      ...EMPLACEMENTS_PAR_PROXIMITE.filter((e) => typeEmplacement(e) === ligne.type && accepte(e.code, e.niveau)).map(
+      ...EMPLACEMENTS_PAR_PROXIMITE.filter((e) => typeEmplacement(e) === (enHaut ? 'connecteur' : ligne.type) && accepte(e.code, e.niveau)).map(
         (e) => e.code
       ),
       ...placesTampon(this.capaciteTampon()).filter((c) => accepte(c, 3)),
@@ -130,12 +132,11 @@ export class Stock implements OnInit {
     return code ? NUMEROS_MAGASIN.get(code) ?? code : '';
   }
   capaciteTampon = signal(20);
-  limites = signal<LimitesConnecteurs>({ longueur: 120, largeur: 80, hauteur_n3: 100, hauteur_n4: 150, taux: 85, poids_max: 15 });
   readonly rang = RANG_PROXIMITE;
 
-  // Niveau 4 : il faut l'élévateur pour y prendre un produit
+  // Niveau 4 (et 5 du bloc E) : il faut l'élévateur pour y prendre un produit
   estNiveau4(code: string | null): boolean {
-    return !!code && /^[A-H]4\d{2}$/.test(code);
+    return !!code && /^[A-H][45]\d{2}$/.test(code);
   }
 
   // Lignes à ranger : sans emplacement, ou en zone tampon (à ranger dès qu'une place se libère)
@@ -153,6 +154,21 @@ export class Stock implements OnInit {
   });
 
   readonly total = computed(() => this.filtrees().reduce((somme, l) => somme + l.quantite, 0));
+  // Pièces (visibilité) : somme des lignes dont les pièces sont connues
+  readonly totalPieces = computed(() => {
+    const connues = this.filtrees().filter((l) => l.pieces !== null && l.pieces !== undefined);
+    return {
+      pieces: connues.reduce((s, l) => s + (l.pieces ?? 0), 0),
+      connues: connues.length,
+      approx: connues.some((l) => l.pieces_approx),
+    };
+  });
+
+  // « 3 466 », « ≈ 3 466 » (estimé), « — » (inconnu : produit entré sans ticket lu)
+  pieces(x: { pieces?: number | null; pieces_approx?: boolean }): string {
+    if (x.pieces === null || x.pieces === undefined) return '—';
+    return (x.pieces_approx ? '≈ ' : '') + formatNombre(x.pieces);
+  }
 
   // Références trouvées par la recherche, avec leur quantité totale : chacune a son bouton « Exporter »
   readonly referencesTrouvees = computed(() => {
@@ -219,7 +235,6 @@ export class Stock implements OnInit {
     this.synchroniser(false);
     this.service.getParametres().subscribe((p) => {
       this.capaciteTampon.set(p.tampon_capacite);
-      if (p.connecteurs) this.limites.set(p.connecteurs);
     });
   }
 
@@ -252,6 +267,14 @@ export class Stock implements OnInit {
     const emplacement = valeur ? TOUS_LES_EMPLACEMENTS.find((e) => e.code === valeur) : null;
     if (valeur && !estTampon(valeur) && !emplacement) {
       this.erreurAffectation.set(`L'emplacement ${valeur} n'existe pas (code A000 à H410, ou numéro du magasin comme 0012).`);
+      return;
+    }
+    if (emplacement && (typeEmplacement(emplacement) === 'bloque' || typeEmplacement(emplacement) === 'bobine_wip')) {
+      this.erreurAffectation.set(
+        typeEmplacement(emplacement) === 'bloque'
+          ? `On ne pose rien en ${valeur} : ${EMPLACEMENTS_BLOQUES.get(emplacement.code)}.`
+          : `${valeur} sert au stockage des bobines WIP (blocs E à H, niveau 0) : les bobines des imports vont dans les blocs A à D.`
+      );
       return;
     }
     if (emplacement && typeEmplacement(emplacement) !== ligne.type) {

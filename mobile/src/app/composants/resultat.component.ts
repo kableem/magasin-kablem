@@ -3,15 +3,15 @@ import { DatePipe } from '@angular/common';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { checkmark, alert, close, keypadOutline, timeOutline, arrowForward } from 'ionicons/icons';
-import { LIBELLES_TYPE, ResultatControle } from '../services/modeles';
-import { EmplPipe } from './empl.pipe';
+import { LIBELLES_TYPE, ResultatControle, nombre } from '../services/modeles';
+import { EmplPipe, NumerosPipe } from './empl.pipe';
 
 // Résultat d'un contrôle : bandeau de couleur, emplacement en étiquette jaune (comme au rayonnage),
 // flash plein écran à l'arrivée pour être vu de loin. compact = liste (pas de flash).
 @Component({
   selector: 'app-resultat',
   standalone: true,
-  imports: [EmplPipe, IonIcon, DatePipe],
+  imports: [EmplPipe, NumerosPipe, IonIcon, DatePipe],
   template: `
     @if (r(); as r) {
       @if (flash() && !compact()) {
@@ -61,7 +61,14 @@ import { EmplPipe } from './empl.pipe';
             </div>
           }
 
-          @if (r.colis; as c) {
+          @if (r.pieces; as pc) {
+            <!-- import par référence : les pièces du colis s'ajoutent au total de la référence -->
+            <div class="colis">
+              <span class="num">Colis <b>n° {{ r.colis?.numero }}</b> · +{{ nombre(pc.pieces) }}</span>
+              <span class="barre-colis"><i [style.width.%]="pc.attendues ? (100 * (pc.recues > pc.attendues ? pc.attendues : pc.recues)) / pc.attendues : 0"></i></span>
+              <span class="compte"><b>{{ nombre(pc.recues) }}</b>/{{ nombre(pc.attendues) }} pièces</span>
+            </div>
+          } @else if (r.colis; as c) {
             <div class="colis">
               <span class="num">Colis <b>n° {{ c.numero }}</b></span>
               <span class="barre-colis"><i [style.width.%]="c.attendus ? (100 * (c.recus > c.attendus ? c.attendus : c.recus)) / c.attendus : 0"></i></span>
@@ -71,7 +78,7 @@ import { EmplPipe } from './empl.pipe';
           @if (r.produit?.type) {
             <span class="k-pastille" [class]="'k-pastille ' + r.produit!.type">{{ libelleType() }}</span>
           }
-          <p class="message">{{ r.message }}</p>
+          <p class="message">{{ r.message | numeros }}</p>
           <p class="pied">
             <span><ion-icon name="time-outline"></ion-icon>{{ r.date | date: 'HH:mm:ss' }}</span>
             @if (r.saisie_manuelle) {
@@ -143,6 +150,7 @@ import { EmplPipe } from './empl.pipe';
 export class ResultatComponent {
   readonly r = input<ResultatControle | null>(null);
   readonly compact = input(false);
+  readonly nombre = nombre;
   readonly flash = signal(false);
 
   constructor() {

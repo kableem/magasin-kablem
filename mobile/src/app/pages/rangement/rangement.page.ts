@@ -1,3 +1,4 @@
+import { nomEmplacement } from '../../services/plan';
 import { Component, computed, inject, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { IonContent, IonIcon } from '@ionic/angular/standalone';
@@ -43,9 +44,7 @@ interface ProduitARanger {
         [consigne]="mode().consigne"
         [cible]="mode().cible"
         [resultat]="resultat()"
-        [compteur]="ranges() ? ranges() + ' rangé' + (ranges() > 1 ? 's' : '') : null"
-        [libelleManuel]="mode().cible ? 'Code de l\\'emplacement ou ticket' : 'Contenu du QR'"
-        [exempleManuel]="mode().cible ? 'ex. ' + mode().cible : 'ex. F0391;13000;10;202613167;1'"
+        [compteur]="ranges() ? ranges() + ' rangé' + (ranges() > 1 ? 's' : '') : null"
         (lecture)="lire($event)"
       ></app-scanner>
 
@@ -109,7 +108,7 @@ export class RangementPage {
     }
     return {
       attendu: 'tout' as const,
-      consigne: this.resultat() ? `Rescannez l'étiquette de ${c.code}` : `Étiquette de ${c.code}`,
+      consigne: this.resultat() ? `Rescannez l'étiquette de ${nomEmplacement(c.code)}` : `Étiquette de ${nomEmplacement(c.code)}`,
       cible: c.code,
     };
   });

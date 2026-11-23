@@ -1,4 +1,6 @@
 const express = require('express');
+const { nomEmplacement, codeDuNumero } = require('../plan');
+const { avecPieces } = require('../pieces');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const db = require('../db');
@@ -23,10 +25,15 @@ async function lignesEnStock(connexion = db, verrou = false) {
   const [lignes] = await connexion.query(
     `SELECT p.id, p.reception_id, r.reference, r.type, r.taille_bobine, r.type_cosse, r.lot, p.quantite, p.emplacement,
             r.longueur, r.largeur, r.hauteur, r.poids,
-            DATE_FORMAT(r.date_reception, '%Y-%m-%dT%H:%i:%s') AS date_reception
+            DATE_FORMAT(r.date_reception, '%Y-%m-%dT%H:%i:%s') AS date_reception,
+            p.carton_id, ca.numero AS carton_numero, -- carton de la ligne (quand elle vient d'un seul carton)
+            p.palette_cosses_id, pc.numero AS palette_numero, -- palette de cosses (seule sur son emplacement)
+            pc.descendue_par IS NOT NULL AS palette_descendue -- palette de connecteurs descendue pour être complétée
      FROM placements p
      JOIN receptions r ON r.id = p.reception_id
-     ${verrou ? 'FOR UPDATE' : ''}`
+     LEFT JOIN cartons ca ON ca.id = p.carton_id
+     LEFT JOIN palettes_cosses pc ON pc.id = p.palette_cosses_id
+     ${verrou ? 'FOR UPDATE OF p, r' : ''}`
   );
   return lignes.map(avecMesures);
 }
@@ -96,17 +103,16 @@ function regrouper(lignes) {
   for (const l of lignes) {
     const cle = [l.reference, l.type, l.taille_bobine, l.type_cosse, l.lot, l.date_reception, l.emplacement].join('|');
     const g = groupes.get(cle);
-    const volume = l.type === 'connecteur' ? R.volumeCarton(l) * l.quantite : null;
-    const poids = l.type === 'connecteur' ? Number(l.poids) * l.quantite : null;
     if (g) {
       g.quantite += l.quantite;
       g.ids.push(l.id);
-      if (volume !== null) {
-        g.volume += volume;
-        g.poids_total += poids;
+      // pièces (visibilité) : inconnues si une ligne n'en a pas, « environ » si une est estimée
+      if ('pieces' in g) {
+        g.pieces = g.pieces === null || l.pieces === null ? null : g.pieces + l.pieces;
+        g.pieces_approx = g.pieces_approx || l.pieces_approx;
       }
     } else {
-      groupes.set(cle, { ...l, ids: [l.id], volume, poids_total: poids });
+      groupes.set(cle, { ...l, ids: [l.id] });
     }
   }
   return [...groupes.values()];
@@ -116,7 +122,8 @@ function regrouper(lignes) {
 // Tri : référence, puis ordre FIFO (plus petit lot, puis réception la plus ancienne).
 router.get('/', async (req, res, next) => {
   try {
-    res.json(regrouper(await lignesEnStock()).sort(ordreStock));
+    // nombre de colis (quantite) et, pour la visibilité, les pièces de ces colis
+    res.json(regrouper(await avecPieces(db, await lignesEnStock())).sort(ordreStock));
   } catch (err) { next(err); }
 });
 
@@ -129,18 +136,19 @@ router.post('/ranger-automatiquement', async (req, res, next) => {
   try {
     await verrouillerStock(connexion); // une opération sur le stock à la fois
     await connexion.beginTransaction();
-    const { capaciteTampon: capacite, limites } = await parametresRangement(connexion);
+    const { capaciteTampon: capacite } = await parametresRangement(connexion);
     const lignes = await lignesEnStock(connexion, true);
     const reservees = await placesReservees(connexion, true);
     const enRayon = [...lignes.filter((l) => l.emplacement && !R.estTampon(l.emplacement)), ...reservees.filter((l) => !R.estTampon(l.emplacement))];
-    const tampon = lignes.filter((l) => R.estTampon(l.emplacement));
-    const sansPlace = lignes.filter((l) => !l.emplacement);
+    // une palette de cosses ne se coupe pas : elle se déplace en entier avec « Ranger le magasin » sur le mobile
+    const tampon = lignes.filter((l) => R.estTampon(l.emplacement) && !l.palette_cosses_id);
+    const sansPlace = lignes.filter((l) => !l.emplacement && !l.palette_cosses_id);
 
     // Nouvelle répartition de chaque ligne traitée : placement -> [{ emplacement, quantite }]
     const repartition = new Map();
 
     // 1. Tampon → rayonnages (pas de zone tampon dans ce calcul)
-    const planTampon = R.proposerPlan(tampon, enRayon, { ordre: 'fifo', capaciteTampon: 0, limites });
+    const planTampon = R.proposerPlan(tampon, enRayon, { ordre: 'fifo', capaciteTampon: 0 });
     for (const l of tampon) {
       const parts = planTampon.filter((p) => p.id === l.id);
       const deplace = parts.filter((p) => p.emplacement).reduce((s, p) => s + p.quantite, 0);
@@ -158,7 +166,7 @@ router.post('/ranger-automatiquement', async (req, res, next) => {
     ];
 
     // 2. Produits non rangés
-    const planNouveaux = R.proposerPlan(sansPlace, etat, { capaciteTampon: capacite, limites });
+    const planNouveaux = R.proposerPlan(sansPlace, etat, { capaciteTampon: capacite });
     for (const l of sansPlace) {
       repartition.set(
         l.id,
@@ -221,13 +229,17 @@ router.put('/:id/emplacement', exigerGestionnaire(), async (req, res, next) => {
       await connexion.rollback();
       return res.status(400).json({ message: erreurMotif });
     }
-    const { capaciteTampon: capacite, limites } = await parametresRangement(connexion);
+    const { capaciteTampon: capacite } = await parametresRangement(connexion);
     const lignes = await lignesEnStock(connexion, true);
     const ids = new Set(Array.isArray(req.body.ids) && req.body.ids.length ? req.body.ids.map(Number) : [Number(req.params.id)]);
     const aDeplacer = lignes.filter((l) => ids.has(l.id));
     if (aDeplacer.length !== ids.size) {
       await connexion.rollback();
       return res.status(404).json({ message: 'Ligne introuvable dans le stock' });
+    }
+    if (aDeplacer.some((l) => l.palette_cosses_id)) {
+      await connexion.rollback();
+      return res.status(409).json({ message: `Ce produit est sur la palette de cosses n° ${aDeplacer.find((l) => l.palette_cosses_id).palette_numero} : une palette se déplace en entier, avec « Ranger le magasin » sur le mobile (scannez l'étiquette d'un de ses cartons).` });
     }
     if (aDeplacer.every((l) => l.emplacement === emplacement)) {
       await connexion.rollback();
@@ -237,7 +249,7 @@ router.put('/:id/emplacement', exigerGestionnaire(), async (req, res, next) => {
     if (emplacement) {
       const autres = [...lignes.filter((l) => !ids.has(l.id)), ...(await placesReservees(connexion, true))];
       const plan = aDeplacer.map((l) => ({ id: l.id, emplacement, quantite: l.quantite }));
-      const erreur = R.verifierPlan(plan, aDeplacer, autres, capacite, limites);
+      const erreur = R.verifierPlan(plan, aDeplacer, autres, capacite);
       if (erreur) {
         await connexion.rollback();
         return res.status(409).json({ message: erreur });
@@ -275,7 +287,7 @@ router.put('/:id/emplacement', exigerGestionnaire(), async (req, res, next) => {
 // Chaque contrôle : { cle, titre, statut: 'ok' | 'alerte' | 'erreur', message, details: [] }
 router.get('/verification', async (req, res, next) => {
   try {
-    const { capaciteTampon: capaciteT, limites } = await parametresRangement(db);
+    const { capaciteTampon: capaciteT } = await parametresRangement(db);
     const lignes = await lignesEnStock();
     const controles = [];
     const ajouter = (cle, titre, statut, message, details = []) =>
@@ -347,13 +359,7 @@ router.get('/verification', async (req, res, next) => {
         surcharges.push(`${code} : produits incompatibles sur la même palette (${[...new Set(unites.map((u) => u.reference))].join(', ')})`);
         continue;
       }
-      if (premier.type === 'connecteur') {
-        const lim = R.limitesPalette(code, limites);
-        const poids = unites.reduce((t, u) => t + Number(u.poids || 0), 0);
-        const volume = unites.reduce((t, u) => t + R.volumeCarton(u), 0);
-        if (poids > lim.poidsMax + 1e-9) surcharges.push(`${code} : ${Math.round(poids * 10) / 10} kg pour ${lim.poidsMax} kg maximum`);
-        if (volume > lim.volumeMax + 1e-6) surcharges.push(`${code} : ${Math.round(volume / 1000)} L pour ${Math.round(lim.volumeMax / 1000)} L maximum`);
-      } else if (unites.length > R.capacite(premier)) {
+      if (premier.type !== 'connecteur' && unites.length > R.capacite(premier) && !premier.palette_cosses_id) { // une palette de cosses occupe son emplacement à elle seule
         surcharges.push(`${code} : ${unites.length} produits pour ${R.capacite(premier)} maximum`);
       }
     }
@@ -414,10 +420,10 @@ router.get('/verification', async (req, res, next) => {
 });
 
 // ---------- Historique des changements d'emplacement ----------
-const ORIGINES = { deplacement: 'Déplacement', plan_import: "Plan d'import modifié", automatique: 'Automatique', regroupement: 'Ranger le magasin', inventaire: 'Inventaire' };
+const ORIGINES = { deplacement: 'Déplacement', plan_import: "Plan d'import modifié", automatique: 'Automatique', regroupement: 'Ranger le magasin', inventaire: 'Inventaire', suppression_import: "Suppression d'un import" };
 const TYPES = { bobine: 'Bobine', cosse: 'Cosse', connecteur: 'Connecteur' };
 const TAILLES = { grande: 'grande', moyenne: 'moyenne', petite: 'petite' };
-const ROLES = { admin: 'Administrateur', chef_magasin: 'Chef de magasin', magasinier: 'Magasinier', planificateur: 'Planificateur' };
+const ROLES = { admin: 'Administrateur', chef_magasin: 'Chef de magasin', magasinier: 'Magasinier' };
 
 const libelleType = (m) => TYPES[m.type] + (m.taille_bobine ? ' ' + TAILLES[m.taille_bobine] : '');
 
@@ -437,7 +443,8 @@ async function chargerHistorique(filtres = {}, limite = 500) {
     valeurs.push(`%${String(filtres.reference).trim().toUpperCase()}%`);
   }
   if (filtres.emplacement) {
-    const code = String(filtres.emplacement).trim().toUpperCase();
+    // numéro de l'étiquette (« 0342 ») ou code
+    const code = codeDuNumero(filtres.emplacement) ?? String(filtres.emplacement).trim().toUpperCase();
     conditions.push('(m.depuis = ? OR m.vers = ?)');
     valeurs.push(code, code);
   }
@@ -540,8 +547,8 @@ router.get('/historique/excel', async (req, res, next) => {
         type: libelleType(m),
         quantite: m.quantite,
         colis: m.colis ?? '',
-        depuis: m.depuis || 'non rangé',
-        vers: m.vers || 'retiré',
+        depuis: m.depuis ? nomEmplacement(m.depuis) : 'non rangé',
+        vers: m.vers ? nomEmplacement(m.vers) : 'retiré',
         libere: m.depuis_liberee ? 'Oui' : '',
         motif: m.motif_libelle || '',
         commentaire: m.commentaire || '',
@@ -662,10 +669,10 @@ router.get('/historique/pdf', async (req, res, next) => {
       cellule(libelleType(m), 3);
       cellule(m.quantite, 4, { gras: true });
       // Trajet : ancien emplacement en gris, nouveau en vert
-      const depuis = (m.depuis || 'non rangé') + (m.depuis_liberee ? ' (libéré)' : '');
+      const depuis = (m.depuis ? nomEmplacement(m.depuis) : 'non rangé') + (m.depuis_liberee ? ' (libéré)' : '');
       doc.font('Helvetica').fontSize(8.5).fillColor(GRIS).text(depuis + '  ', x + 5, y + 5, { width: cols[5][1] - 10, continued: true })
         .fillColor(GRIS).text('»  ', { continued: true })
-        .font('Helvetica-Bold').fillColor(VERT).text(m.vers || 'retiré');
+        .font('Helvetica-Bold').fillColor(VERT).text(m.vers ? nomEmplacement(m.vers) : 'retiré');
       x += cols[5][1];
       doc.font('Helvetica').fontSize(8.5).fillColor('#141a2b').text(m.motif_libelle || '-', x + 5, y + 5, { width: cols[6][1] - 10 });
       if (m.commentaire) doc.fillColor(GRIS).fontSize(8).text(m.commentaire, { width: cols[6][1] - 10 });

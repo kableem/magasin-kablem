@@ -4,9 +4,9 @@
 import { Component, ElementRef, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { EmplPipe } from '../emplacements/empl.pipe';
 import {
   LigneStock,
-  LimitesConnecteurs,
   MouvementEmplacement,
   ORIGINES_MOUVEMENT,
   ReceptionService,
@@ -29,7 +29,6 @@ import {
   COSSES_AXIALES_PAR_PALETTE,
   emplacementTampon,
   estTampon,
-  limitesNiveau,
   typeDuNiveau,
   BLOCS,
   TOUS_LES_EMPLACEMENTS,
@@ -40,11 +39,10 @@ import { Vue3d } from '../emplacements/vue-3d';
 import { RangerMagasin, aujourdhui } from '../emplacements/ranger-magasin';
 
 type EtatEmplacement = 'libre' | 'partiel' | 'plein';
-const SEUIL_PLEIN_CONNECTEUR = 0.95;
 
 @Component({
   selector: 'app-emplacement-test',
-  imports: [FormsModule, DatePipe, Vue3d, RangerMagasin],
+  imports: [FormsModule, DatePipe, Vue3d, RangerMagasin, EmplPipe],
   templateUrl: './emplacement-test.html',
   styleUrl: './emplacement-test.css',
 })
@@ -77,23 +75,6 @@ export class EmplacementTest implements OnInit {
   );
   readonly rang = RANG_PROXIMITE;
 
-  // Limites d'une palette de connecteurs (niveaux 3 et 4), réglables par l'administrateur
-  limites = signal<LimitesConnecteurs>({ longueur: 120, largeur: 80, hauteur_n3: 100, hauteur_n4: 150, taux: 85, poids_max: 15 });
-  saisieLimites: LimitesConnecteurs = { ...this.limites() };
-  erreurLimites = signal('');
-  enregistrementLimites = signal(false);
-  readonly champsLimites: { cle: keyof LimitesConnecteurs; libelle: string; unite: string }[] = [
-    { cle: 'longueur', libelle: 'Longueur palette', unite: 'cm' },
-    { cle: 'largeur', libelle: 'Largeur palette', unite: 'cm' },
-    { cle: 'hauteur_n3', libelle: 'Hauteur utile niveau 3', unite: 'cm' },
-    { cle: 'hauteur_n4', libelle: 'Hauteur utile niveau 4', unite: 'cm' },
-    { cle: 'taux', libelle: 'Volume utilisable', unite: '%' },
-    { cle: 'poids_max', libelle: 'Poids maximal', unite: 'kg' },
-  ];
-  // Volume utilisable d'une palette, en litres, par niveau
-  readonly volumeN3 = computed(() => Math.round(limitesNiveau(3, this.limites()).volumeMax / 1000));
-  readonly volumeN4 = computed(() => Math.round(limitesNiveau(4, this.limites()).volumeMax / 1000));
-
   readonly blocs = BLOCS;
   // Numéros du magasin (0012…) des niveaux déjà numérotés ; les autres gardent le code de l'application
   readonly numerosMagasin = NUMEROS_MAGASIN;
@@ -102,7 +83,7 @@ export class EmplacementTest implements OnInit {
   }
   readonly typeDuNiveau = typeDuNiveau;
   readonly total = TOUS_LES_EMPLACEMENTS.length;
-  readonly nbNiveaux = NIVEAUX.length;
+  readonly nbNiveaux = Math.max(...BLOCS.map((b) => b.nbNiveaux)); // 6 avec le bloc E
 
   filtreBloc = signal<string>(''); // '' = tous les blocs
   vue = signal<'2d' | '3d'>('2d'); // plan à plat ou magasin en 3D
@@ -139,37 +120,7 @@ export class EmplacementTest implements OnInit {
       this.capaciteTampon.set(p.tampon_capacite);
       this.saisieCapacite.set(p.tampon_capacite);
       this.tamponMax.set(p.tampon_max);
-      if (p.connecteurs) {
-        this.limites.set(p.connecteurs);
-        this.saisieLimites = { ...p.connecteurs };
-      }
     });
-  }
-
-  enregistrerLimites(): void {
-    const valeurs = this.saisieLimites;
-    if (Object.values(valeurs).some((v) => !Number.isFinite(Number(v)) || Number(v) <= 0)) {
-      this.erreurLimites.set('Toutes les valeurs doivent être des nombres positifs.');
-      return;
-    }
-    this.enregistrementLimites.set(true);
-    this.stockService.setLimitesConnecteurs(valeurs).subscribe({
-      next: ({ connecteurs }) => {
-        this.enregistrementLimites.set(false);
-        this.limites.set(connecteurs);
-        this.saisieLimites = { ...connecteurs };
-        this.erreurLimites.set('');
-        this.toast.afficher('Limites des palettes de connecteurs enregistrées');
-      },
-      error: (err: HttpErrorResponse) => {
-        this.enregistrementLimites.set(false);
-        this.erreurLimites.set(err.error?.message || 'Modification impossible');
-      },
-    });
-  }
-
-  limitesModifiees(): boolean {
-    return this.champsLimites.some((c) => Number(this.saisieLimites[c.cle]) !== this.limites()[c.cle]);
   }
 
   // Étiquettes QR des places de la zone tampon à imprimer (par défaut : toutes)
@@ -226,18 +177,26 @@ export class EmplacementTest implements OnInit {
     return this.occupation().get(code) ?? [];
   }
 
-  // "2/6" pour une palette de petites bobines ; "62 % · 13/15 kg" pour des connecteurs ; '' sinon
+  // Palette de cosses (cartons et cosses séparées) : seule sur son emplacement, rien ne s'y ajoute (elle se déplace en entier)
+  carton(code: string): { numero: number; cosses: number } | null {
+    const liste = this.contenus(code).filter((l) => l.palette_cosses_id);
+    return liste.length ? { numero: liste[0].palette_numero ?? 0, cosses: nombreProduits(liste) } : null;
+  }
+
+  // Cartons sur l'emplacement, pour leur couleur : 'cosse' (palette de cartons de cosses), 'connecteur', ou null
+  famillePalette(code: string): 'cosse' | 'connecteur' | null {
+    const l = this.contenu(code);
+    if (l?.type === 'connecteur') return 'connecteur';
+    return this.carton(code) ? 'cosse' : null;
+  }
+
+  // "2/6" pour une palette de petites bobines ; « 3 cartons » pour des connecteurs ; « 72 cosses » pour une palette de cartons de cosses ; '' sinon
   remplissage(code: string): string {
     const liste = this.contenus(code);
-    if (liste[0]?.type === 'connecteur') {
-      const niveau = estTampon(code) ? 3 : Number(code[1]);
-      const volume = liste.reduce((s, l) => s + Number(l.volume ?? 0), 0);
-      const poids = liste.reduce((s, l) => s + Number(l.poids_total ?? 0), 0);
-      const pct = (100 * volume) / limitesNiveau(niveau, this.limites()).volumeMax;
-      // Un tout petit volume s'affiche « < 1 % » et non « 0 % » (la palette n'est pas vide)
-      const texte = volume > 0 && pct < 1 ? '< 1 %' : `${Math.round(pct)} %`;
-      return `${texte} · ${formatNombre(Math.round(poids * 10) / 10)}/${this.limites().poids_max} kg`;
-    }
+    const k = this.carton(code);
+    if (k && liste[0]?.type === 'connecteur') return `${k.cosses} carton${k.cosses > 1 ? 's' : ''}`; // la couleur violette dit « connecteurs »
+    if (k) return `${k.cosses} cosse${k.cosses > 1 ? 's' : ''}`; // la couleur kraft dit « cartons de cosses »
+    if (liste[0]?.type === 'connecteur') return `${nombreProduits(liste)} carton${nombreProduits(liste) > 1 ? 's' : ''}`;
     if (liste[0]?.type === 'cosse') {
       // plates et axiales chacune à part : « 7/10 · 2/3 ax. »
       const c = remplissageCosses(liste);
@@ -249,18 +208,12 @@ export class EmplacementTest implements OnInit {
 
   // ---------- État d'un emplacement : libre, partiel ou plein ----------
   // Bobines et cosses : nombre de produits / capacité de la palette.
-  // Connecteurs : le volume ou le poids le plus rempli ; plein à partir de 95 %
-  // (le reste ne permet plus de poser un carton).
+  // Connecteurs (provisoire, sans volume ni poids) : un emplacement occupé est plein.
   tauxRemplissage(code: string): number {
     const liste = this.contenus(code);
     if (!liste.length) return 0;
-    if (liste[0].type === 'connecteur') {
-      const niveau = estTampon(code) ? 3 : Number(code[1]);
-      const volume = liste.reduce((s, l) => s + Number(l.volume ?? 0), 0);
-      const poids = liste.reduce((s, l) => s + Number(l.poids_total ?? 0), 0);
-      const taux = Math.max(volume / limitesNiveau(niveau, this.limites()).volumeMax, poids / this.limites().poids_max);
-      return taux >= SEUIL_PLEIN_CONNECTEUR ? 1 : taux;
-    }
+    if (this.carton(code)) return 1; // une palette de cosses occupe tout l'emplacement
+    if (liste[0].type === 'connecteur') return 1;
     // cosses : pleine quand il n'y a plus de place ni pour une plate ni pour une axiale
     if (liste[0].type === 'cosse') {
       const c = remplissageCosses(liste);
@@ -279,7 +232,6 @@ export class EmplacementTest implements OnInit {
   // Nombre d'emplacements par état (rayonnages affichés + zone tampon)
   readonly resumeEtats = computed(() => {
     this.occupation();
-    this.limites();
     const codes = [
       ...TOUS_LES_EMPLACEMENTS.filter((e) => !this.filtreBloc() || e.bloc === this.filtreBloc()).map((e) => e.code),
       ...this.placesTampon().map((e) => e.code),
@@ -293,16 +245,11 @@ export class EmplacementTest implements OnInit {
   placeRestante(code: string): string {
     const liste = this.contenus(code);
     if (!liste.length) return 'Palette vide';
+    if (this.carton(code) && liste[0].type === 'connecteur') return 'Palette de connecteurs : elle se complète à la réception';
+    if (this.carton(code)) return "Palette de cartons de cosses : rien ne s'y ajoute (elle se déplace en entier)";
     if (this.etat(code) === 'plein') return 'Plus de place';
     const l = liste[0];
-    if (l.type === 'connecteur') {
-      const niveau = estTampon(code) ? 3 : Number(code[1]);
-      const volume = liste.reduce((s, x) => s + Number(x.volume ?? 0), 0);
-      const poids = liste.reduce((s, x) => s + Number(x.poids_total ?? 0), 0);
-      const litres = Math.max(0, Math.round((limitesNiveau(niveau, this.limites()).volumeMax - volume) / 1000));
-      const kg = Math.max(0, Math.round((this.limites().poids_max - poids) * 10) / 10);
-      return `Encore ${formatNombre(kg)} kg et ${formatNombre(litres)} L`;
-    }
+    if (l.type === 'connecteur') return 'Une seule référence et un seul lot sur cet emplacement';
     if (l.type === 'cosse') {
       const c = remplissageCosses(liste);
       return `Encore ${Math.max(0, COSSES_PAR_PALETTE - c.plates)} cosse(s) plate(s) et ${Math.max(0, COSSES_AXIALES_PAR_PALETTE - c.axiales)} axiale(s)`;
@@ -313,17 +260,13 @@ export class EmplacementTest implements OnInit {
 
   // Texte de la capacité dans le détail d'un emplacement
   detailCapacite(code: string): string {
+    const k = this.carton(code);
+    if (k && this.contenus(code)[0]?.type === 'connecteur') return `Palette de connecteurs n° ${k.numero} · ${k.cosses} carton${k.cosses > 1 ? 's' : ''}`;
+    if (k) return `Palette de cartons de cosses n° ${k.numero} · ${k.cosses} cosse${k.cosses > 1 ? 's' : ''} · seule sur l'emplacement`;
     const r = this.remplissage(code);
     const type = this.contenus(code)[0]?.type;
     if (!r) return '1 palette';
-    if (type === 'connecteur') {
-      const liste = this.contenus(code);
-      const niveau = estTampon(code) ? 3 : Number(code[1]);
-      const litres = liste.reduce((s, l) => s + Number(l.volume ?? 0), 0) / 1000;
-      const max = Math.round(limitesNiveau(niveau, this.limites()).volumeMax / 1000);
-      const vol = litres < 1 ? formatNombre(Math.round(litres * 100) / 100) : formatNombre(Math.round(litres));
-      return `1 palette · ${nombreProduits(liste)} carton(s) · ${vol} L sur ${formatNombre(max)} L · ${r}`;
-    }
+    if (type === 'connecteur') return `1 palette · ${r}`;
     if (type === 'cosse') {
       const c = remplissageCosses(this.contenus(code));
       return `1 palette · ${c.plates}/${COSSES_PAR_PALETTE} cosses plates · ${c.axiales}/${COSSES_AXIALES_PAR_PALETTE} axiales`;

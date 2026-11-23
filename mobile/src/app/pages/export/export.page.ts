@@ -3,20 +3,22 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { AlertController, IonButton, IonContent, IonFooter, IonIcon, IonInput, IonSpinner, IonToolbar } from '@ionic/angular/standalone';
+import { AlertController, IonButton, IonContent, IonFooter, IonIcon, IonSpinner, IonToolbar } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
-  checkmark, closeOutline, qrCodeOutline, remove, add, arrowForward, alertCircle, cubeOutline, flagOutline, layersOutline, homeOutline,
+  checkmark, closeOutline, qrCodeOutline, remove, add, arrowForward, alertCircle, cubeOutline, flagOutline, layersOutline, homeOutline, searchOutline, closeCircle,
 } from 'ionicons/icons';
 import { Lecture, ScannerComponent } from '../../composants/scanner.component';
 import { ResultatComponent } from '../../composants/resultat.component';
+import { DescenteComponent } from '../../composants/descente.component';
+import { DescenteService } from '../../services/descente.service';
 import { EnteteComponent } from '../../composants/entete.component';
 import { ExportService } from '../../services/export.service';
 import { AuthService } from '../../services/auth.service';
 import { RetourService } from '../../services/retour.service';
 import { NavigationService } from '../../services/navigation.service';
 import {
-  DESTINATIONS, Destination, LIBELLES_TYPE, LignePreparation, PreparationExport, ResultatControle, referenceEtLot, codeEmplacement,
+  DESTINATIONS, Descente, Destination, LIBELLES_TYPE, LignePreparation, PreparationExport, ResultatControle, referenceEtLot, codeEmplacement, nombre,
 } from '../../services/modeles';
 
 // Sortie vers la production : l'API impose le FIFO (lots et emplacements) et vérifie chaque prise.
@@ -24,27 +26,47 @@ import {
 @Component({
   selector: 'app-export',
   standalone: true,
-  imports: [EmplPipe, FormsModule, DatePipe, IonContent, IonButton, IonIcon, IonInput, IonSpinner, IonFooter, IonToolbar, ScannerComponent, ResultatComponent, EnteteComponent],
+  imports: [EmplPipe, FormsModule, DatePipe, IonContent, IonButton, IonIcon, IonSpinner, IonFooter, IonToolbar, ScannerComponent, ResultatComponent, EnteteComponent, DescenteComponent],
   template: `
-    <app-entete [titre]="prep() ? 'Sortie en cours' : 'Nouvelle sortie'" module="Export" retour="/menu" [etape]="enEtape()" (precedent)="precedent()"></app-entete>
+    <app-entete [titre]="descente() ? 'Descendre le carton' : prep() ? 'Sortie en cours' : 'Nouvelle sortie'" module="Export" retour="/menu" [etape]="enEtape()" (precedent)="precedent()"></app-entete>
     <ion-content class="ion-padding">
       @if (chargement()) {
         <p class="k-envoi"><ion-spinner name="crescent"></ion-spinner></p>
+      } @else if (descente(); as d) {
+        <!-- Carton neuf ouvert par la sortie : ses cosses restantes descendent tout de suite (la sortie suivante attend) -->
+        <app-descente [descente]="d" (terminee)="descenteFinie($event)"></app-descente>
       } @else if (!prep()) {
         <!-- 1. Demande : le ticket du produit donne la référence, puis quantité et destination -->
         <app-scanner [fixe]="false" [actif]="!envoi()" attendu="ticket" consigne="Ticket du produit à sortir" [resultat]="resultat()" (lecture)="lireReference($event)"></app-scanner>
 
         <form id="demande" (ngSubmit)="preparer()">
-          <label class="k-libelle" for="ref">Référence</label>
-          <div class="k-champ grand">
-            <ion-icon name="cube-outline"></ion-icon>
-            <ion-input id="ref" name="reference" placeholder="scannée, ou tapée : ex. F0411" [(ngModel)]="reference" autocapitalize="characters" class="mono"></ion-input>
+          <label class="k-libelle" for="reference">Référence</label>
+          <!-- la référence demandée par la production : tapée au clavier (suggestions du stock) ou ticket scanné -->
+          <div class="reference-saisie" [class.remplie]="!!reference">
+            <ion-icon name="search-outline"></ion-icon>
+            <input id="reference" name="reference" class="mono" autocomplete="off" autocapitalize="characters" spellcheck="false"
+              placeholder="Tapez la référence (ou scannez le ticket)" [ngModel]="reference" (ngModelChange)="taperReference($event)" />
+            @if (reference) {
+              <button type="button" class="effacer" (click)="taperReference('')" aria-label="Effacer"><ion-icon name="close-circle"></ion-icon></button>
+            }
           </div>
+          @if (suggestions().length) {
+            <div class="suggestions" role="listbox" aria-label="Références en stock">
+              @for (s of suggestions(); track s.reference) {
+                <button type="button" role="option" (click)="choisirReference(s.reference)">
+                  <b class="mono">{{ s.reference }}</b>
+                  <small>{{ nombre(s.disponible) }} en stock</small>
+                </button>
+              }
+            </div>
+          } @else if (reference && rechercheFaite() && !referenceChoisie()) {
+            <p class="aucune">Aucune référence en stock ne contient « {{ reference }} ».</p>
+          }
 
           <label class="k-libelle">Quantité</label>
           <div class="quantite">
-            <button type="button" (click)="quantite = max(1, quantite - 1)" aria-label="Moins"><ion-icon name="remove"></ion-icon></button>
-            <ion-input name="quantite" type="number" inputmode="numeric" min="1" [(ngModel)]="quantite" aria-label="Quantité"></ion-input>
+            <button type="button" [disabled]="quantite <= 1" (click)="quantite = max(1, quantite - 1)" aria-label="Moins"><ion-icon name="remove"></ion-icon></button>
+            <output class="valeur" aria-live="polite" aria-label="Quantité">{{ quantite }}</output>
             <button type="button" (click)="quantite = quantite + 1" aria-label="Plus"><ion-icon name="add"></ion-icon></button>
           </div>
 
@@ -79,12 +101,10 @@ import {
             <app-scanner
               [actif]="!envoi()"
               [attendu]="emplacement() ? 'ticket' : 'emplacement'"
-              [consigne]="emplacement() ? 'Ticket du produit pris · lot ' + (prochain()?.lot ?? '') : 'Étiquette de ' + (prochain()?.emplacement ?? 'l\\'emplacement')"
+              [consigne]="emplacement() ? 'Ticket du produit pris · lot ' + (prochain()?.lot ?? '') : 'Étiquette de ' + ((prochain()?.emplacement | empl) || 'l\\'emplacement')"
               [cible]="emplacement() ? null : (prochain()?.emplacement ?? null)"
               [compteur]="p.lignes.length - p.restants + '/' + p.lignes.length"
               [resultat]="resultat()"
-              [libelleManuel]="emplacement() ? 'Contenu du QR' : 'Code de l\\'emplacement'"
-              [exempleManuel]="emplacement() ? 'ex. F0391;13000;10;202613167;1' : 'ex. D011'"
               (lecture)="emplacement() ? lireProduit($event) : lireEmplacement($event)"
             ></app-scanner>
           }
@@ -162,6 +182,9 @@ import {
                     <small class="partiel">{{ l.preleves }}/</small>
                   }
                   ×{{ l.quantite }}
+                  @if (l.pieces !== null && l.pieces !== undefined) {
+                    <small class="pieces-ligne">{{ l.pieces_approx ? '≈ ' : '' }}{{ nombre(l.pieces) }} pièces</small>
+                  }
                 </span>
               </li>
             }
@@ -170,7 +193,7 @@ import {
       }
     </ion-content>
 
-    @if (!chargement() && !prep()) {
+    @if (!descente() && !chargement() && !prep()) {
       <ion-footer class="k-pied">
         <ion-toolbar>
           <ion-button type="submit" form="demande" expand="block" class="k-btn-rouge" [disabled]="envoi() || !reference.trim() || quantite < 1 || !destination()" (click)="preparer()">
@@ -182,7 +205,7 @@ import {
           </ion-button>
         </ion-toolbar>
       </ion-footer>
-    } @else if (prep() && prep()!.statut !== 'en_cours') {
+    } @else if (!descente() && prep() && prep()!.statut !== 'en_cours') {
       <ion-footer class="k-pied">
         <ion-toolbar>
           <div class="actions">
@@ -194,17 +217,38 @@ import {
     }
   `,
   styles: `
+    .pieces-ligne { display: block; font-size: 12px; font-weight: 600; color: var(--k-gris); }
     .actions { display: flex; gap: 10px; }
     .suivant { flex: 1; }
     .fifo { display: flex; gap: 12px; padding: 14px 16px; color: var(--k-nuit); background: linear-gradient(135deg, #fff, #fff4f3); border: 1px solid #f6d0cd; border-radius: 18px; }
     .fifo ion-icon { flex: none; font-size: 28px; color: var(--k-rouge); }
     .fifo p { margin: 0; font-size: 14.5px; line-height: 1.4; }
-    .grand ion-input { font-size: 22px; font-weight: 800; }
+    .reference-saisie { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 0 12px 0 16px; background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; }
+    .reference-saisie:focus-within { border-color: var(--k-marine); }
+    .reference-saisie.remplie { border-color: var(--k-vert); }
+    .reference-saisie > ion-icon { flex: none; font-size: 24px; color: var(--k-gris); }
+    .reference-saisie input { flex: 1; min-width: 0; height: 60px; padding: 0; font-size: 22px; font-weight: 900; color: var(--k-nuit); text-transform: uppercase; background: none; border: 0; outline: none; }
+    .reference-saisie input::placeholder { font-family: inherit; font-size: 15px; font-weight: 500; text-transform: none; color: var(--k-gris); }
+    .reference-saisie .effacer { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; font-size: 24px; color: var(--k-gris); background: none; border: 0; }
+    .suggestions { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .suggestions button { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 8px 14px; font: inherit; text-align: left; background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 14px; }
+    .suggestions button:active { background: var(--k-surface-2); border-color: var(--k-marine); }
+    .suggestions b { font-size: 18px; color: var(--k-nuit); }
+    .suggestions small { flex: none; padding: 2px 10px; font-size: 12.5px; font-weight: 800; color: var(--k-vert); background: var(--k-vert-clair); border-radius: 999px; }
+    .aucune { margin: 8px 2px 0; font-size: 14px; color: var(--k-erreur); }
+    .reference-scannee { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 16px; background: var(--k-surface); border: 2px solid var(--k-vert); border-radius: 18px; }
+    .reference-scannee ion-icon { flex: none; font-size: 26px; color: var(--k-vert); }
+    .reference-scannee b { font-size: 24px; font-weight: 900; color: var(--k-nuit); }
+    .reference-scannee small { margin-left: auto; padding: 2px 10px; font-size: 12.5px; font-weight: 800; color: var(--k-vert); background: var(--k-vert-clair); border-radius: 999px; }
+    .reference-scannee.vide { border-style: dashed; border-color: var(--k-bord); }
+    .reference-scannee.vide ion-icon { color: var(--k-gris); }
+    .reference-scannee.vide span { font-size: 15px; line-height: 1.3; color: var(--k-gris); }
     .fifo { margin-top: 18px; }
     .quantite { display: grid; grid-template-columns: 64px 1fr 64px; gap: 10px; }
     .quantite button { height: 64px; font-size: 28px; color: var(--k-marine); background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; }
     .quantite button:active { background: var(--k-surface-2); }
-    .quantite ion-input { height: 64px; --padding-start: 0; text-align: center; font-size: 30px; font-weight: 900; background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; }
+    .quantite .valeur { display: grid; place-items: center; height: 64px; font-size: 32px; font-weight: 900; color: var(--k-nuit); background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; }
+    .quantite button:disabled { opacity: 0.4; }
     .obligatoire { color: var(--k-rouge); }
     .destinations { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
     .destinations button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 68px; font: inherit; font-size: 17px; font-weight: 900; color: var(--k-nuit); background: var(--k-surface); border: 2px solid var(--k-bord); border-radius: 18px; transition: all 0.15s; }
@@ -253,7 +297,9 @@ import {
   `,
 })
 export class ExportPage implements OnInit {
+  readonly nombre = nombre;
   private service = inject(ExportService);
+  private descentes = inject(DescenteService);
   private retour = inject(RetourService);
   private alertes = inject(AlertController);
   private auth = inject(AuthService);
@@ -265,11 +311,18 @@ export class ExportPage implements OnInit {
   readonly envoi = signal(false);
   readonly erreur = signal('');
   readonly prep = signal<PreparationExport | null>(null);
+  // carton ouvert à descendre avant toute autre sortie
+  readonly descente = signal<Descente | null>(null);
   readonly resultat = signal<ResultatControle | null>(null);
   readonly emplacement = signal<{ texte: string | null; manuel: boolean } | null>(null);
   readonly destination = signal<Destination | null>(null);
   reference = '';
   quantite = 1;
+  // Saisie au clavier : références en stock proposées pendant la frappe
+  readonly suggestions = signal<{ reference: string; type: string; disponible: number }[]>([]);
+  readonly rechercheFaite = signal(false);
+  readonly referenceChoisie = signal(false);
+  private attenteRecherche: ReturnType<typeof setTimeout> | undefined;
   readonly max = Math.max;
 
   // Prochain prélèvement dans l'ordre FIFO (le magasinier peut en faire un autre d'abord)
@@ -282,18 +335,21 @@ export class ExportPage implements OnInit {
 
   // « Retour » revient à l'étape d'avant : scanner de référence ouvert, emplacement scanné, sortie finie
   readonly enEtape = computed(() => {
+    if (this.descente()) return false; // « Retour » = menu ; la descente reste à faire
     const p = this.prep();
     return !!p && (p.statut !== 'en_cours' || !!this.emplacement());
   });
 
   constructor() {
-    addIcons({ checkmark, closeOutline, qrCodeOutline, remove, add, arrowForward, alertCircle, cubeOutline, flagOutline, layersOutline, homeOutline });
+    addIcons({ checkmark, closeOutline, qrCodeOutline, remove, add, arrowForward, alertCircle, cubeOutline, flagOutline, layersOutline, homeOutline, searchOutline, closeCircle });
   }
 
   // Une sortie commencée est reprise (application fermée, téléphone éteint…)
   async ngOnInit(): Promise<void> {
     try {
-      this.prep.set(await this.service.enCours());
+      const [prep, descente] = await Promise.all([this.service.enCours(), this.descentes.enCours()]);
+      this.prep.set(prep);
+      this.descente.set(descente);
     } catch (e) {
       this.erreur.set(this.messageErreur(e as HttpErrorResponse));
     } finally {
@@ -305,10 +361,41 @@ export class ExportPage implements OnInit {
     return p.type ? LIBELLES_TYPE[p.type] + (p.taille_bobine ? ' · ' + p.taille_bobine : '') : '';
   }
 
+  // Référence tapée au clavier : on cherche les références en stock qui la contiennent
+  taperReference(texte: string): void {
+    this.reference = String(texte ?? '').toUpperCase();
+    this.referenceChoisie.set(false);
+    this.rechercheFaite.set(false);
+    this.erreur.set('');
+    clearTimeout(this.attenteRecherche);
+    const q = this.reference.trim();
+    if (!q) return this.suggestions.set([]);
+    this.attenteRecherche = setTimeout(async () => {
+      try {
+        const l = await this.service.references(q);
+        if (this.reference.trim() !== q) return; // le texte a changé entre-temps
+        // référence exacte trouvée : elle est choisie
+        if (l.length === 1 && l[0].reference === q) return this.choisirReference(q);
+        this.suggestions.set(l);
+      } catch {
+        this.suggestions.set([]);
+      } finally {
+        this.rechercheFaite.set(true);
+      }
+    }, 250);
+  }
+
+  choisirReference(ref: string): void {
+    clearTimeout(this.attenteRecherche);
+    this.reference = ref;
+    this.referenceChoisie.set(true);
+    this.suggestions.set([]);
+  }
+
   // Ticket scanné dans le formulaire : on garde la référence (le lot est choisi par le FIFO)
   lireReference(l: Lecture): void {
     this.retour.lu();
-    this.reference = referenceEtLot(l.texte).reference;
+    this.choisirReference(referenceEtLot(l.texte).reference);
     this.erreur.set('');
     this.resultat.set({
       uuid: '', controle: 'export', resultat: 'reference_lue', couleur: 'vert', titre: `Référence ${this.reference}`,
@@ -334,11 +421,19 @@ export class ExportPage implements OnInit {
       this.resultat.set(null);
       this.emplacement.set(null);
     } catch (e) {
-      this.erreur.set(this.messageErreur(e as HttpErrorResponse));
+      const err = e as HttpErrorResponse;
+      if (err.error?.code === 'descente_requise' && err.error.descente) this.descente.set(err.error.descente);
+      else this.erreur.set(this.messageErreur(err));
       this.retour.signaler('rouge');
     } finally {
       this.envoi.set(false);
     }
+  }
+
+  // Descente finie : on revient où on en était (sortie terminée, ou nouvelle sortie)
+  descenteFinie(r: ResultatControle): void {
+    this.descente.set(null);
+    this.resultat.set(r);
   }
 
   lireEmplacement(l: Lecture): void {
@@ -366,6 +461,7 @@ export class ExportPage implements OnInit {
       const r = await this.service.scanner(p.id, e.texte, l.texte, e.manuel || l.manuel);
       this.resultat.set(r);
       if (r.preparation) this.prep.set(r.preparation);
+      if (r.descente) this.descente.set(r.descente);
       this.retour.signaler(r.couleur);
       // Bon prélèvement : on passe à l'emplacement suivant, sauf s'il est au même endroit (pas besoin de
       // rescanner l'étiquette). Mauvais produit : on reste au même emplacement.
@@ -420,6 +516,8 @@ export class ExportPage implements OnInit {
     this.emplacement.set(null);
     this.erreur.set('');
     this.reference = '';
+    this.suggestions.set([]);
+    this.referenceChoisie.set(false);
     this.quantite = 1;
     this.destination.set(null);
   }

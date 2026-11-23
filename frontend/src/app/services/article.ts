@@ -59,7 +59,7 @@ export const taillePalette = (par: number | null | undefined) => TAILLES_PALETTE
 @Injectable({ providedIn: 'root' })
 export class ArticleService {
   private http = inject(HttpClient);
-  private apiUrl = 'http://localhost:3000/api/articles';
+  private apiUrl = '/api/articles';
 
   getArticles(): Observable<Article[]> {
     return this.http.get<Article[]>(this.apiUrl);

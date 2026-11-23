@@ -17,10 +17,12 @@ const { verrouillerStock, libererStock } = require('../verrou-stock');
 const { poserQuantite } = require('./stock');
 const { receptionPrecedenteNonTerminee, messageOrdreReception } = require('./imports');
 const { bobinesPalette, vuePalette, placerPalette, typePalette, nommer } = require('../palettes');
+const { modeReception } = require('../parametres');
 const { lireEmplacement } = require('../ticket');
 const { enregistrer, operation } = require('./mobile').outils;
 
 const router = express.Router();
+const { correctionInterdite } = require('../corrections'); // plus de correction à la réception (2026-11-23)
 const refus = (status, message) => Object.assign(new Error(message), { status });
 
 // Transaction sous le verrou du stock ; le traitement renvoie le JSON de la réponse
@@ -63,6 +65,9 @@ async function paletteVerrouillee(connexion, id) {
 
 // POST / : ouvrir une palette (ou reprendre la palette vide déjà ouverte par cet utilisateur)
 router.post('/', transaction(async (connexion, req) => {
+  if ((await modeReception(connexion)) === 'separee') {
+    throw refus(409, 'La réception se fait sans palette : scannez chaque produit. Le rangement se fera ensuite, avec la page Rangement, une fois la réception validée.');
+  }
   const imp = await importEnReception(connexion, Number(req.body?.import_id));
   const [[vide]] = await connexion.query(
     `SELECT p.* FROM palettes_reception p
@@ -94,17 +99,26 @@ router.delete('/:id', transaction(async (connexion, req) => {
 
 // DELETE /:id/bobines/:controle : colis (bobine ou cosse) scanné par erreur, retiré de la palette ouverte.
 // Il redevient « non reçu » : il se scannera sur sa vraie palette.
-router.delete('/:id/bobines/:controle', transaction(async (connexion, req) => {
+router.delete('/:id/bobines/:controle', correctionInterdite, transaction(async (connexion, req) => {
   const p = await paletteVerrouillee(connexion, req.params.id);
   if (p.statut !== 'ouverte') throw refus(409, `La palette ${p.numero} est terminée : rouvrez-la pour la modifier.`);
   const [[c]] = await connexion.query(
-    "SELECT id FROM controles_mobile WHERE id = ? AND palette_id = ? AND controle = 'reception' AND resultat = 'conforme'",
+    "SELECT id, reception_id FROM controles_mobile WHERE id = ? AND palette_id = ? AND controle = 'reception' AND resultat = 'conforme'",
     [req.params.controle, p.id]
   );
   if (!c) throw refus(404, "Ce colis n'est pas sur la palette");
   const bobines = await bobinesPalette(connexion, p.id);
   if (bobines.find((b) => b.controle_id === c.id)?.range) throw refus(409, 'Ce colis est déjà au stock : il ne se retire plus de la palette.');
   await connexion.query('DELETE FROM controles_mobile WHERE id = ?', [c.id]);
+  // Import résumé : la ligne référence + lot est née des scans, elle perd ce colis (et disparaît sans colis)
+  const [[ligne]] = await connexion.query(
+    "SELECT r.id, r.quantite FROM receptions r JOIN imports i ON i.id = r.import_id WHERE r.id = ? AND i.mode = 'resume' FOR UPDATE",
+    [c.reception_id]
+  );
+  if (ligne) {
+    if (ligne.quantite > 1) await connexion.query('UPDATE receptions SET quantite = quantite - 1 WHERE id = ?', [ligne.id]);
+    else await connexion.query('DELETE FROM receptions WHERE id = ?', [ligne.id]);
+  }
   // Palette de nouveau vide : elle pourra recevoir des bobines comme des cosses
   if (bobines.length === 1 && !p.emplacement) await connexion.query('UPDATE palettes_reception SET type = NULL, taille = NULL WHERE id = ?', [p.id]);
   return vuePalette(connexion, await paletteVerrouillee(connexion, p.id));
@@ -189,7 +203,7 @@ router.post('/:id/ranger', operation('rangement', async (connexion, req) => {
 }));
 
 // POST /:id/rouvrir : ajouter un colis oublié, tant que la réception n'est pas terminée
-router.post('/:id/rouvrir', transaction(async (connexion, req) => {
+router.post('/:id/rouvrir', correctionInterdite, transaction(async (connexion, req) => {
   const p = await paletteVerrouillee(connexion, req.params.id);
   await importEnReception(connexion, p.import_id);
   if (p.statut === 'ouverte') return vuePalette(connexion, p);

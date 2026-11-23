@@ -8,8 +8,8 @@
     </p>
     <p class="regle-niveaux">
       <span data-type="bobine">Niveau 0 : bobines</span>
-      <span data-type="cosse">Niveaux 1 et 2 : cosses (et niveau 3 du bloc E)</span>
-      <span data-type="connecteur">Niveaux 3 et 4 : connecteurs</span>
+      <span data-type="cosse">Niveaux 1 et 2 : cosses séparées (1 à 3 du bloc E)</span>
+      <span data-type="connecteur">Niveaux 3 et 4 : connecteurs et cartons de cosses neufs (4 et 5 du bloc E)</span>
     </p>
   </div>
 </div>
@@ -43,6 +43,8 @@
   <span class="etat-legende" data-etat="libre"><i></i>Libre <strong>{{ resumeEtats().libre }}</strong></span>
   <span class="etat-legende" data-etat="partiel"><i></i>Partiel, il reste de la place <strong>{{ resumeEtats().partiel }}</strong></span>
   <span class="etat-legende" data-etat="plein"><i></i>Plein <strong>{{ resumeEtats().plein }}</strong></span>
+  <span class="carton-legende" data-carton="cosse"><i></i>Cartons de cosses</span>
+  <span class="carton-legende" data-carton="connecteur"><i></i>Connecteurs</span>
   <small>Rayonnages{{ filtreBloc() ? ' du bloc ' + filtreBloc() : '' }} et zone tampon</small>
 </div>
 }
@@ -142,6 +144,7 @@
                         [class.choisie]="selection()?.code === e.code"
                         [class.occupee]="contenu(e.code)"
                         [attr.data-type]="contenu(e.code)?.type"
+                        [attr.data-carton]="famillePalette(e.code)"
                         [attr.data-etat]="etat(e.code)"
                         [attr.title]="(numerosMagasin.has(e.code) ? nom(e.code) + ' (' + e.code + ')' : e.code) + ' · ' + libelleEtat[etat(e.code)]"
                         (click)="choisir(e)"
@@ -171,48 +174,6 @@
         </div>
       }
     </div>
-  </section>
-}
-@if (!filtreBloc()) {
-  <!-- Palettes de connecteurs : limites de volume et de poids (niveaux 3 et 4) -->
-  <section class="bloc palettes-connecteurs">
-    <header class="bloc-entete">
-      <span class="lettre lettre-connecteur">K</span>
-      <div>
-        <h2>Palettes de connecteurs</h2>
-        <small>
-          Niveaux 3 et 4. Un carton va sur une palette si le volume, le poids et sa taille restent dans ces limites.
-          Le niveau 4 (élévateur) n'est utilisé que si le niveau 3 est plein.
-        </small>
-      </div>
-    </header>
-    @if (estAdmin()) {
-      <form class="limites" (ngSubmit)="enregistrerLimites()" novalidate>
-        @for (c of champsLimites; track c.cle) {
-          <label>
-            {{ c.libelle }}
-            <span class="saisie-unite">
-              <input type="number" min="1" step="1" [name]="c.cle" [(ngModel)]="saisieLimites[c.cle]" (ngModelChange)="erreurLimites.set('')" />
-              <em>{{ c.unite }}</em>
-            </span>
-          </label>
-        }
-        <button type="submit" class="btn btn-secondaire" [disabled]="enregistrementLimites() || !limitesModifiees()">Enregistrer</button>
-      </form>
-      @if (erreurLimites()) {
-        <p class="erreur">{{ erreurLimites() }}</p>
-      }
-    } @else {
-      <p class="resume-limites">
-        Palette {{ limites().longueur }} × {{ limites().largeur }} cm · hauteur utile {{ limites().hauteur_n3 }} cm
-        (niveau 3) et {{ limites().hauteur_n4 }} cm (niveau 4) · {{ limites().taux }} % du volume ·
-        {{ limites().poids_max }} kg maximum.
-      </p>
-    }
-    <p class="resume-limites">
-      Volume utilisable d'une palette : <strong>{{ nombre(volumeN3()) }} L</strong> au niveau 3,
-      <strong>{{ nombre(volumeN4()) }} L</strong> au niveau 4 · poids maximal <strong>{{ limites().poids_max }} kg</strong>.
-    </p>
   </section>
 }
 }
@@ -273,6 +234,7 @@
           [class.choisie]="selection()?.code === e.code"
           [class.occupee]="contenu(e.code)"
           [attr.data-type]="contenu(e.code)?.type"
+                        [attr.data-carton]="famillePalette(e.code)"
           [attr.data-etat]="etat(e.code)"
           [attr.title]="e.code + ' · ' + libelleEtat[etat(e.code)]"
           (click)="choisir(e)"
@@ -365,9 +327,9 @@
               </td>
               <td class="centre"><span class="qte-hist">{{ nombre(m.quantite) }}</span></td>
               <td class="trajet">
-                <span class="etiq-hist" [class.vide]="!m.depuis">{{ m.depuis || 'non rangé' }}</span>
+                <span class="etiq-hist" [class.vide]="!m.depuis">{{ (m.depuis | empl) || 'non rangé' }}</span>
                 <svg class="fleche" viewBox="0 0 24 24" aria-label="vers"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>
-                <span class="etiq-hist nouveau" [class.vide]="!m.vers">{{ m.vers || 'retiré' }}</span>
+                <span class="etiq-hist nouveau" [class.vide]="!m.vers">{{ (m.vers | empl) || 'retiré' }}</span>
               </td>
               <td class="motif-hist">
                 <span>{{ m.motif_libelle || '—' }}</span>
@@ -409,7 +371,6 @@
     <span class="detail-code">{{ nom(e.code) }}</span>
     <dl>
       @if (numerosMagasin.has(e.code)) {
-      <div><dt>Code application</dt><dd>{{ e.code }}</dd></div>
       }
       @if (estTampon(e.code)) {
       <div><dt>Zone</dt><dd>Zone tampon (au sol, devant A et B)</dd></div>
@@ -433,7 +394,7 @@
         <div class="contenu-palette">
           <strong class="code-ref">{{ c.reference }}</strong>
           <span>{{ libelleProduit(c) }}</span>
-          <span>Lot <b>{{ c.lot }}</b> · <b>× {{ nombre(c.quantite) }}</b></span>
+          <span>Lot <b>{{ c.lot }}</b> · <b>× {{ nombre(c.quantite) }}</b>{{ c.palette_numero ? ' · palette n° ' + c.palette_numero : '' }}{{ c.carton_numero ? ' · carton n° ' + c.carton_numero : '' }}</span>
           <small>Reçu le {{ c.date_reception | date: 'dd/MM/yyyy HH:mm' }}</small>
         </div>
       }
@@ -445,7 +406,7 @@
       @for (m of mouvementsSelection(); track m.id) {
         <div class="mvt">
           <span>{{ m.date | date: 'dd/MM HH:mm' }} · <b>{{ m.reference }}</b> × {{ m.quantite }}</span>
-          <span>{{ m.depuis || 'non rangé' }} → {{ m.vers || 'retiré' }}</span>
+          <span>{{ (m.depuis | empl) || 'non rangé' }} → {{ (m.vers | empl) || 'retiré' }}</span>
           <small>{{ m.motif_libelle || origines[m.origine] }}{{ m.par ? ' · ' + m.par : '' }}</small>
         </div>
       }

@@ -84,9 +84,12 @@ tr.inactif .avatar { filter: grayscale(1); opacity: 0.6; }
 .avatar[data-role='chef_magasin'] { background: linear-gradient(135deg, #e08a00, #b86e00); }
 .badge[data-role='chef_magasin'] { color: #9a5b00; background: #fdf1dc; }
 .stat-orange { border-left-color: #e08a00; }
-.stats { grid-template-columns: repeat(6, 1fr); }
-.stat-violet { border-left-color: #7a3fc4; }
-.avatar[data-role='planificateur'] { background: linear-gradient(135deg, #7a3fc4, #552a8c); }
-.badge[data-role='planificateur'] { color: #552a8c; background: #f2ebfc; }
+.stats { grid-template-columns: repeat(5, 1fr); }
 @media (max-width: 1100px) { .stats { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* Un seul téléphone par compte : connecté en ce moment sur le mobile */
+.en-ligne { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; padding: 2px 9px; font-size: 12px; font-weight: 700; color: #1d6b3a; background: #e3f4e8; border-radius: 999px; white-space: nowrap; }
+.en-ligne i { width: 8px; height: 8px; background: #1f9d55; border-radius: 50%; box-shadow: 0 0 0 3px rgba(31, 157, 85, 0.2); }
+.liberer { margin-left: 6px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 700; color: var(--rouge); background: #fff; border: 1.5px solid #f3c0c0; border-radius: 999px; cursor: pointer; }
+.liberer:hover { background: #fdecec; }
