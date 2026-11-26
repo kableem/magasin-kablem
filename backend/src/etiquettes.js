@@ -48,16 +48,30 @@ async function pdfEtiquettesTampon(codes, sortie) {
 // Étiquettes de cartons de cosses, au format des tickets verts (115 × 75 mm, une étiquette par page).
 // QR : « référence;lot;pièces;JJ/MM/AAAA HH:MM:SS.mmm » (date système de la 1re impression : QR unique).
 const MM = 72 / 25.4;
-async function pdfEtiquettesCartons(cartons, sortie) {
+// separateurs : une page « PALETTE N° X » avant les cartons de chaque palette (impression de plusieurs cartons)
+async function pdfEtiquettesCartons(cartons, sortie, { separateurs = false } = {}) {
   const L = 115 * MM;
   const H = 75 * MM;
   const doc = new PDFDocument({ size: [L, H], margin: 0, autoFirstPage: false, info: { Title: 'Étiquettes de cartons', Author: 'Kab-lem Tunisia' } });
   // Impression en taille réelle par défaut (pas « Ajuster à la page », qui agrandit l'étiquette)
   doc._root.data.ViewerPreferences = doc.ref({ PrintScaling: 'None' });
   doc.pipe(sortie);
+  let paletteCourante;
   for (const c of cartons) {
-    doc.addPage({ size: [L, H], margin: 0 });
     const m = 4 * MM;
+    if (separateurs && c.palette_numero !== paletteCourante) {
+      paletteCourante = c.palette_numero;
+      // Page de séparation : la palette et la liste de ses cartons (à poser sur la palette avec ses étiquettes)
+      const siens = cartons.filter((x) => x.palette_numero === c.palette_numero);
+      doc.addPage({ size: [L, H], margin: 0 });
+      doc.lineWidth(2.5 * MM).strokeColor('#111111').rect(2.5 * MM, 2.5 * MM, L - 5 * MM, H - 5 * MM).stroke(); // cadre épais (peu d'encre)
+      doc.fillColor('#111111').font('Helvetica-Bold').fontSize(13)
+        .text(c.palette_numero ? 'PALETTE' : 'CARTONS SANS PALETTE', m, 7 * MM, { width: L - 2 * m, align: 'center' });
+      if (c.palette_numero) doc.fontSize(78).text(`N° ${c.palette_numero}`, m, 13 * MM, { width: L - 2 * m, align: 'center' });
+      doc.font('Helvetica-Bold').fontSize(11).text(`${siens.length} étiquette${siens.length > 1 ? 's' : ''} de carton${siens.length > 1 ? 's' : ''} : n° ${siens.map((x) => x.numero).join(', ')}`, m, 49 * MM, { width: L - 2 * m, align: 'center' });
+      doc.font('Helvetica').fontSize(8).text(`Import ${c.numero_livraison ?? 'n° ' + c.import_id} · collez chaque étiquette sur son carton`, m, H - m - 4 * MM, { width: L - 2 * m, align: 'center' });
+    }
+    doc.addPage({ size: [L, H], margin: 0 });
     const cote = 32 * MM; // QR de 32 mm : bien lu par le téléphone, sans prendre toute l'étiquette
     const png = await QRCode.toBuffer(c.qr, { errorCorrectionLevel: 'M', margin: 1, scale: 10 });
     doc.image(png, m, m, { width: cote, height: cote });
@@ -67,6 +81,14 @@ async function pdfEtiquettesCartons(cartons, sortie) {
     const l = L - x - m;
     let y = m;
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(`CARTON N° ${c.numero}`, x, y, { width: l });
+    // Numéro de la palette, en noir en haut à droite : on voit tout de suite sur quelle palette va le carton
+    if (c.palette_numero) {
+      const bl = 21 * MM;
+      doc.rect(L - m - bl, m, bl, 9.5 * MM).fill('#111111');
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6.5).text('PALETTE', L - m - bl, m + 1.2 * MM, { width: bl, align: 'center' });
+      doc.fontSize(14).text(String(c.palette_numero), L - m - bl, m + 3.6 * MM, { width: bl, align: 'center' });
+      doc.fillColor('#111111');
+    }
     y += 6.5 * MM;
     const ligne = (titre, valeur, taille = 13) => {
       doc.font('Helvetica').fontSize(7).fillColor('#444444').text(titre, x, y, { width: l });

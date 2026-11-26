@@ -477,8 +477,9 @@ export class ReceptionService {
     return this.http.get(`${this.api}/imports/${importId}/pointage/pdf`, { responseType: 'blob' });
   }
 
-  etiquettesCartons(importId: number): Observable<Blob> {
-    return this.http.post(`${this.api}/imports/${importId}/cartons/etiquettes`, {}, { responseType: 'blob' });
+  // paletteId : seulement les cartons de cette palette (sinon tout l'import, palette par palette)
+  etiquettesCartons(importId: number, paletteId?: number): Observable<Blob> {
+    return this.http.post(`${this.api}/imports/${importId}/cartons/etiquettes`, paletteId ? { palette_id: paletteId } : {}, { responseType: 'blob' });
   }
 
   // Produits reçus hors import dont la référence vient d'être ajoutée au catalogue : au stock
@@ -913,7 +914,7 @@ export interface FiltresJournal {
 
 export interface LigneJournal {
   id: number;
-  controle: 'reception' | 'rangement' | 'export' | 'ranger';
+  controle: 'reception' | 'rangement' | 'export' | 'ranger' | 'correction';
   controle_libelle: string;
   resultat: string;
   titre: string;
@@ -954,4 +955,5 @@ export const RESULTATS_ALERTE: { valeur: string; libelle: string }[] = [
   { valeur: 'inconnu', libelle: 'Produit inconnu / hors import' },
   { valeur: 'stock_modifie', libelle: 'Stock modifié : sortie refusée' },
   { valeur: 'deplacement_refuse', libelle: 'Ranger le magasin : déplacement refusé' },
+  { valeur: 'correction', libelle: 'Correction du magasinier (réception)' },
 ];

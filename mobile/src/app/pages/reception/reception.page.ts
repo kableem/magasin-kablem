@@ -242,7 +242,17 @@ interface ModeScan {
             }
           }
 
-          <!-- Plus de correction à la réception (décision du 2026-11-23) : ni « Mettre dans le carton », ni « la sortir du carton » -->
+          @if (resultat()?.proposition_carton; as pc) {
+            <!-- Erreur « Séparées » : la cosse déjà reçue séparée, rescannée en mode Cartons, va dans le carton -->
+            <ion-button expand="block" class="k-btn-principal mettre-carton" [disabled]="occupe()" (click)="mettreDansCarton(pc.carton_id, pc.controle_id)">
+              <ion-icon slot="start" name="cube-outline"></ion-icon> Mettre dans le carton {{ pc.numero }}
+            </ion-button>
+          } @else if (resultat()?.carton; as rc) {
+            <!-- Erreur « Cartons » : la cosse qui vient d'entrer dans le carton était séparée -->
+            @if (rc.scan && choisi()?.carton_ouvert?.id === rc.id) {
+              <button type="button" class="corriger-mode" [disabled]="occupe()" (click)="sortirDuCarton(rc.id, { uuid: rc.scan })">C'était une cosse séparée : la sortir du carton</button>
+            }
+          }
 
           @if (choisi()?.carton_ouvert; as k) {
             <!-- Carton ouvert : ses cosses (une seule référence, un seul lot) -->
@@ -259,6 +269,10 @@ interface ModeScan {
                 @for (x of k.liste; track x.controle_id) {
                   <li>
                     <span><b class="mono">{{ x.reference }}</b>{{ x.colis ? ' · colis ' + x.colis : '' }}{{ x.pieces !== null ? ' · ' + nombre(x.pieces) : '' }}</span>
+                    <span class="actions-cosse">
+                      <button type="button" class="lien" (click)="sortirDuCarton(k.id, { controle_id: x.controle_id })">Séparée</button>
+                      <button type="button" class="retirer" (click)="retirerCosse(k.id, x.controle_id)" aria-label="Retirer cette cosse du carton"><ion-icon name="close-outline"></ion-icon></button>
+                    </span>
                   </li>
                 }
               </ul>
@@ -292,6 +306,9 @@ interface ModeScan {
                     @for (b of p.bobines; track b.controle_id) {
                       <li>
                         <span><b class="mono">{{ b.reference }}</b> lot {{ b.lot }}{{ b.colis ? ' · colis ' + b.colis : '' }}</span>
+                        @if (!b.range) {
+                          <button type="button" class="retirer" (click)="retirer(p, b.controle_id)" aria-label="Retirer ce colis de la palette"><ion-icon name="close-outline"></ion-icon></button>
+                        }
                       </li>
                     }
                   </ul>
@@ -386,11 +403,17 @@ interface ModeScan {
                   @for (p of i.palettes_cosses; track p.id) {
                     <li class="palette-cosses">
                       <span><b>Palette {{ p.numero }}</b> · {{ p.contenu }}<small>{{ etatPaletteCosses(p) }}</small></span>
+                      @if (p.statut === 'terminee' && !i.palette_ouverte?.cosses) {
+                        <button type="button" class="lien" (click)="rouvrirPaletteCosses(p)"><ion-icon name="refresh-outline"></ion-icon>Rouvrir</button>
+                      }
                     </li>
                     @for (k of p.cartons; track k.id) {
                       @if (k.cosses) {
                         <li class="carton-de-palette">
                           <span><b>Carton {{ k.numero }}</b> · {{ k.cosses }} cosse{{ k.cosses > 1 ? 's' : '' }} {{ k.reference }}<small>{{ etatCarton(k) }}</small></span>
+                          @if (k.statut === 'termine' && !k.imprime && !i.carton_ouvert && p.statut === 'ouverte' && p.ouverte_par_moi) {
+                            <button type="button" class="lien" (click)="rouvrirCarton(k)"><ion-icon name="refresh-outline"></ion-icon>Rouvrir</button>
+                          }
                         </li>
                       }
                     }
@@ -422,6 +445,9 @@ interface ModeScan {
                   @for (p of palettes(); track p.id) {
                     <li>
                       <span><b>Palette {{ p.numero }}</b> · {{ compte(p) }}<small>{{ etatPalette(p) }}</small></span>
+                      @if (p.statut !== 'ouverte' && !paletteCourante()) {
+                        <button type="button" class="lien" (click)="rouvrir(p)"><ion-icon name="refresh-outline"></ion-icon>Rouvrir</button>
+                      }
                     </li>
                   }
                 </ul>
@@ -613,6 +639,9 @@ interface ModeScan {
     .bobines li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 6px 10px; font-size: 14px; background: var(--k-surface-2); border-radius: 12px; }
     .bobines li.fait { opacity: 0.6; }
     .bobines li.choisie { outline: 2px solid var(--k-rouge); }
+    .corriger-mode { display: block; width: 100%; min-height: 44px; margin-top: 10px; font: inherit; font-size: 14.5px; font-weight: 700; color: #7a4600; background: var(--k-orange-clair); border: 1px dashed var(--k-orange); border-radius: 14px; }
+    .actions-cosse { display: flex; align-items: center; gap: 10px; }
+    .mettre-carton { margin-top: 10px; }
     .retirer { display: grid; place-items: center; width: 36px; height: 36px; font-size: 20px; color: var(--k-gris); background: var(--k-surface); border: 1px solid var(--k-bord); border-radius: 50%; }
     .cible { display: inline-flex; align-items: center; gap: 6px; }
     .cible ion-icon { font-size: 18px; color: var(--k-gris); }
@@ -971,6 +1000,12 @@ export class ReceptionPage implements ViewWillEnter {
     if (p) void this.agir(() => this.controles.annulerPalette(p.id));
   }
 
+  retirer(p: PaletteReception, controleId: number): void {
+    void this.agir(async () => {
+      await this.controles.retirerBobine(p.id, controleId);
+      this.resultat.set(null);
+    }, 'Colis non retiré');
+  }
 
   terminerPalette(): void {
     const p = this.paletteCourante();
@@ -994,6 +1029,12 @@ export class ReceptionPage implements ViewWillEnter {
     this.retour.signaler(entiere && !t.tampon ? 'vert' : 'orange');
   }
 
+  rouvrir(p: PaletteReception): void {
+    void this.agir(async () => {
+      await this.controles.rouvrirPalette(p.id);
+      this.resultat.set(null);
+    }, 'Palette non rouverte');
+  }
 
   // Un seul point d'entrée pour la caméra : l'étape en cours décide de ce que veut dire le QR
   lire(l: Lecture): void {
@@ -1206,7 +1247,23 @@ export class ReceptionPage implements ViewWillEnter {
     if (attente) void this.scanner(attente); // le scan qui attendait la réponse continue
   }
 
+  // Erreur « Cartons » : la cosse était séparée ; elle sort du carton et reste reçue
+  sortirDuCarton(cartonId: number, cosse: { uuid?: string; controle_id?: number }): void {
+    void this.agir(async () => {
+      const r = await this.controles.sortirDuCarton(cartonId, cosse);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'conforme', couleur: 'vert', titre: 'Cosse séparée', message: r.message });
+      this.retour.signaler('vert');
+    }, 'Cosse non sortie du carton');
+  }
 
+  // Cosse reçue séparée, rescannée avec un carton ouvert : elle entre dans le carton (sans être recomptée)
+  mettreDansCarton(cartonId: number, controleId: number): void {
+    void this.agir(async () => {
+      const r = await this.controles.mettreDansCarton(cartonId, controleId);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'conforme', couleur: 'vert', titre: 'Cosse mise dans le carton', message: r.message });
+      this.retour.signaler('vert');
+    }, 'Cosse non déplacée');
+  }
 
   terminerCarton(): void {
     const i = this.choisi();
@@ -1219,7 +1276,19 @@ export class ReceptionPage implements ViewWillEnter {
     }, 'Carton non terminé');
   }
 
+  rouvrirCarton(k: CartonReception): void {
+    void this.agir(async () => {
+      await this.controles.rouvrirCarton(k.id);
+      this.resultat.set(null);
+    }, 'Carton non rouvert');
+  }
 
+  retirerCosse(cartonId: number, controleId: number): void {
+    void this.agir(async () => {
+      await this.controles.retirerCosseCarton(cartonId, controleId);
+      this.resultat.set(null);
+    }, 'Cosse non retirée');
+  }
 
   // ---------- Palettes de cosses ----------
   ouvrirPaletteCosses(): void {
@@ -1268,6 +1337,12 @@ export class ReceptionPage implements ViewWillEnter {
     }, 'Pas sa place');
   }
 
+  rouvrirPaletteCosses(p: PaletteCossesReception): void {
+    void this.agir(async () => {
+      const r = await this.controles.rouvrirPaletteCosses(p.id);
+      this.resultat.set({ ...erreurLocale(new HttpErrorResponse({ status: 200 })), resultat: 'conforme', couleur: 'vert', titre: `Palette ${p.numero} rouverte`, message: r.message });
+    }, 'Palette non rouverte');
+  }
 
   etatPaletteCosses(p: PaletteCossesReception): string {
     if (p.statut === 'ouverte') return p.ouverte_par_moi ? 'en cours' : 'en cours (autre magasinier)';

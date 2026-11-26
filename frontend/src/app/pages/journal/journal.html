@@ -1,7 +1,7 @@
 <div class="page-entete">
   <div>
     <h1>Journal des alertes</h1>
-    <p>Contrôles du mobile : faux emplacements, mauvais produits, écarts de réception, produits inconnus. Mis à jour toutes les 15 secondes.</p>
+    <p>Contrôles du mobile : faux emplacements, mauvais produits, écarts de réception, produits inconnus, corrections faites par les magasiniers à la réception. Mis à jour toutes les 15 secondes.</p>
   </div>
   <div class="actions-entete">
     <button type="button" class="btn-fichier excel" [disabled]="telechargement() !== null || !lignes().length" (click)="telecharger('excel')">
@@ -98,6 +98,7 @@
         <option value="rangement">Rangement</option>
         <option value="export">Export</option>
         <option value="ranger">Ranger le magasin</option>
+        <option value="correction">Correction (réception)</option>
       </select>
     </label>
     <label>

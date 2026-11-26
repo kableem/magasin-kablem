@@ -17,7 +17,7 @@ const { lireEmplacement } = require('../ticket');
 const { avecNumeros } = require('../plan');
 
 const router = express.Router();
-const { correctionInterdite } = require('../corrections'); // plus de correction à la réception (2026-11-23)
+const { noterCorrection, nomColis } = require('../journal-corrections'); // corrections notées au journal (migration 044)
 const refus = (status, message) => Object.assign(new Error(message), { status });
 
 function transaction(traitement) {
@@ -145,7 +145,7 @@ router.post('/:id/remettre', transaction(async (connexion, req) => {
 }));
 
 // POST /:id/rouvrir : carton ou cosse oubliés ; une seule palette ouverte par magasinier
-router.post('/:id/rouvrir', correctionInterdite, transaction(async (connexion, req) => {
+router.post('/:id/rouvrir', transaction(async (connexion, req) => {
   const p = await paletteEnReception(connexion, req.params.id);
   if (p.statut === 'ouverte') {
     if (p.ouverte_par !== req.utilisateur.id) throw refus(409, `La palette n° ${p.numero} est ouverte par un autre magasinier.`);
@@ -161,6 +161,7 @@ router.post('/:id/rouvrir', correctionInterdite, transaction(async (connexion, r
     await connexion.query('DELETE FROM palettes_cosses WHERE id = ?', [autre.id]);
   }
   await connexion.query("UPDATE palettes_cosses SET statut = 'ouverte', ouverte_par = ?, date_terminee = NULL WHERE id = ?", [req.utilisateur.id, p.id]);
+  await noterCorrection(connexion, req, { importId: p.import_id, message: `palette de cosses n° ${p.numero} rouverte.` });
   return {
     palette: await P.vuePalette(connexion, { ...p, statut: 'ouverte', ouverte_par: req.utilisateur.id }),
     message: `Palette n° ${p.numero} rouverte : scannez ce qui manque, puis « Terminer la palette ».`,

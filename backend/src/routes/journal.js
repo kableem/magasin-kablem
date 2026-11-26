@@ -15,7 +15,7 @@ const { outils } = require('./mobile');
 const { COULEURS, TITRES, ALERTES } = outils;
 const router = express.Router();
 
-const CONTROLES = { reception: 'Réception', rangement: 'Rangement', export: 'Export', ranger: 'Ranger le magasin' };
+const CONTROLES = { reception: 'Réception', rangement: 'Rangement', export: 'Export', ranger: 'Ranger le magasin', correction: 'Correction (réception)' };
 const ROLES = { admin: 'Administrateur', chef_magasin: 'Chef de magasin', magasinier: 'Magasinier' };
 const COULEUR_PDF = { vert: '#138a4b', orange: '#d97a00', rouge: '#d42020' };
 
@@ -104,7 +104,7 @@ function descriptionFiltres(q, utilisateurs) {
   return f.join(' · ');
 }
 const lieu = (l) => {
-  if (l.controle === 'reception') return l.numero_livraison ?? (l.import_id ? `import n° ${l.import_id}` : '');
+  if (l.controle === 'reception' || l.controle === 'correction') return l.numero_livraison ?? (l.import_id ? `import n° ${l.import_id}` : '');
   if (l.controle === 'export') return `sortie → ${l.destination ?? ''}`;
   // Ranger le magasin : départ → arrivée scannés
   if (l.controle === 'ranger') return [l.emplacement_prevu, l.emplacement_scanne].filter(Boolean).join(' → ');

@@ -56,6 +56,7 @@ const COULEURS = {
   deplace: 'vert',
   deplacement_refuse: 'rouge',
   carton: 'orange',
+  correction: 'orange', // correction d'une erreur à la réception (migration 044)
 };
 const TITRES = {
   conforme: 'Conforme',
@@ -79,8 +80,9 @@ const TITRES = {
   deplace: 'Déplacé',
   deplacement_refuse: 'Déplacement refusé',
   carton: 'Cosse dans un carton',
+  correction: 'Correction du magasinier',
 };
-const ALERTES = ['ecart_quantite', 'faux_emplacement', 'inconnu', 'mauvais_produit', 'stock_modifie', 'deplacement_refuse'];
+const ALERTES = ['ecart_quantite', 'faux_emplacement', 'inconnu', 'mauvais_produit', 'stock_modifie', 'deplacement_refuse', 'correction'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 
@@ -559,8 +561,7 @@ async function controleReception(connexion, req) {
     if (pc) req.paletteReception = pc;
   }
   if (req.cartonReception && ticket.cle) {
-    // Cosse déjà reçue séparée dans cet import : elle reste séparée, pas de 2e réception
-    // (plus de correction « Mettre dans le carton » depuis le 2026-11-23)
+    // Cosse déjà reçue séparée dans cet import : on propose de la mettre dans le carton ouvert (sans la recompter)
     const [[separee]] = await connexion.query(
       `SELECT id FROM controles_mobile
        WHERE ticket = ? AND controle = 'reception' AND carton_id IS NULL AND import_id = ?
@@ -569,10 +570,11 @@ async function controleReception(connexion, req) {
     );
     if (separee) {
       const k = req.cartonReception;
-      req.cartonReception = null; // ce scan n'entre pas dans le carton
+      req.cartonReception = null; // ce scan n'entre pas dans le carton : c'est une proposition
       return enregistrer(connexion, req, 'reception', 'deja_traite', {
         ...base,
-        message: `Cette cosse (colis n° ${ticket.colis}) est déjà reçue séparée : elle reste séparée, elle n'entre pas dans le carton ${k.numero}.`,
+        extra: { proposition_carton: { controle_id: separee.id, carton_id: k.id, numero: k.numero } },
+        message: `Cette cosse (colis n° ${ticket.colis}) est déjà reçue séparée : touchez « Mettre dans le carton ${k.numero} » si elle fait partie de ce carton.`,
       });
     }
   }

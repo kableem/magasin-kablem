@@ -577,8 +577,11 @@ router.post('/', async (req, res, next) => {
 // QR : « référence;lot;pièces;JJ/MM/AAAA HH:MM:SS.mmm ». La date est celle de la 1re impression (date système),
 // unique à la milliseconde ; une réimpression redonne exactement la même étiquette.
 
-// Donne leur date aux cartons qui n'en ont pas, puis écrit le PDF (une étiquette par page)
+// Donne leur date aux cartons qui n'en ont pas, puis écrit le PDF (une étiquette par page).
+// Les cartons sont rangés palette par palette ; avec plusieurs cartons, une page « PALETTE N° X » sépare les palettes,
+// et chaque étiquette porte le numéro de sa palette : le magasinier sait sur quelle palette coller chaque étiquette.
 async function imprimerCartons(cartons, res) {
+  cartons = [...cartons].sort((a, b) => (a.palette_numero ?? 1e9) - (b.palette_numero ?? 1e9) || a.numero - b.numero);
   const connexion = await db.getConnection();
   const pages = [];
   try {
@@ -593,7 +596,7 @@ async function imprimerCartons(cartons, res) {
       }
       const vue = await C.vueCarton(connexion, c);
       const [[imp]] = await connexion.query('SELECT numero_livraison FROM imports WHERE id = ?', [c.import_id]);
-      pages.push({ ...vue, numero_livraison: imp.numero_livraison, pieces: vue.pieces ?? 0, qr: C.qrCarton({ ...c, pieces: vue.pieces ?? 0 }) });
+      pages.push({ ...vue, palette_numero: c.palette_numero ?? null, numero_livraison: imp.numero_livraison, pieces: vue.pieces ?? 0, qr: C.qrCarton({ ...c, pieces: vue.pieces ?? 0 }) });
     }
     await connexion.commit();
   } catch (err) {
@@ -606,7 +609,7 @@ async function imprimerCartons(cartons, res) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="etiquettes-cartons-${pages.map((p) => p.numero).join('-').slice(0, 60)}.pdf"`);
   res.setHeader('X-Etiquettes', String(pages.length));
-  await pdfEtiquettesCartons(pages, res);
+  await pdfEtiquettesCartons(pages, res, { separateurs: pages.length > 1 });
 }
 
 // POST /api/imports/cartons/:id/etiquette : étiquette d'un carton terminé (ou réimpression)
@@ -656,10 +659,17 @@ router.get('/:id/pointage/pdf', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// { palette_id } (facultatif) : seulement les cartons de cette palette (pas encore imprimés, sinon tous)
 router.post('/:id/cartons/etiquettes', async (req, res, next) => {
   try {
-    const [cartons] = await db.query(`${C.SELECT_CARTON} WHERE c.import_id = ? AND c.statut <> 'ouvert' ORDER BY c.numero`, [req.params.id]);
-    if (!cartons.length) return res.status(404).json({ message: "Aucun carton terminé dans cet import : terminez les cartons sur le mobile." });
+    const paletteId = Number(req.body?.palette_id) > 0 ? Number(req.body.palette_id) : null;
+    const [cartons] = await db.query(
+      `${C.SELECT_CARTON} WHERE c.import_id = ? AND c.statut <> 'ouvert' ${paletteId ? 'AND c.palette_id = ?' : ''} ORDER BY c.numero`,
+      paletteId ? [req.params.id, paletteId] : [req.params.id]
+    );
+    if (!cartons.length) {
+      return res.status(404).json({ message: paletteId ? 'Aucun carton terminé sur cette palette.' : "Aucun carton terminé dans cet import : terminez les cartons sur le mobile." });
+    }
     const nouvelles = cartons.filter((c) => !c.date_etiquette);
     await imprimerCartons(nouvelles.length ? nouvelles : cartons, res);
   } catch (err) { next(err); }

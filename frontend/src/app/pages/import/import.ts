@@ -234,9 +234,19 @@ export class Import implements OnInit, OnDestroy {
     return i.cartons.filter((c) => c.statut !== 'ouvert' && !c.imprime).length;
   }
 
-  cartonsImprimables(i: ImportArrivage): boolean {
-    return i.cartons.some((c) => c.statut !== 'ouvert');
+  // Étiquettes d'une seule palette : celles pas encore imprimées, sinon toutes (réimpression)
+  imprimerPalette(i: ImportArrivage, paletteId: number): void {
+    this.ouvrirPdf(i, this.service.etiquettesCartons(i.id, paletteId));
   }
+
+  aImprimerPalette(i: ImportArrivage, paletteId: number): number {
+    return this.cartonsDe(i, paletteId).filter((c) => c.statut !== 'ouvert' && !c.imprime).length;
+  }
+
+  imprimablesPalette(i: ImportArrivage, paletteId: number): boolean {
+    return this.cartonsDe(i, paletteId).some((c) => c.statut !== 'ouvert');
+  }
+
 
   // Palettes de cosses : les cartons de chaque palette, et ceux sans palette (cas ancien)
   cartonsDe(i: ImportArrivage, paletteId: number | null): CartonImport[] {
@@ -395,6 +405,85 @@ export class Import implements OnInit, OnDestroy {
   }
 
   // Le produit correspond à tous les filtres produit saisis
+  // ---------- Recherche dans UN import (référence ou lot) : seules les lignes trouvées restent affichées ----------
+  // Indépendante de la recherche globale du haut (qui choisit les imports affichés).
+  readonly rechercheImport = signal<Record<number, string>>({});
+
+  texteRecherche(i: ImportArrivage): string {
+    return (this.rechercheImport()[i.id] ?? '').trim().toUpperCase();
+  }
+
+  chercherDansImport(i: ImportArrivage, texte: string): void {
+    this.rechercheImport.update((r) => ({ ...r, [i.id]: texte }));
+  }
+
+  private trouveDans(i: ImportArrivage, ...valeurs: (string | null | undefined)[]): boolean {
+    const q = this.texteRecherche(i);
+    return !q || valeurs.some((v) => String(v ?? '').toUpperCase().includes(q));
+  }
+
+  refsVues(i: ImportArrivage, refs: ReferenceAttendue[]): ReferenceAttendue[] {
+    return refs.filter((r) => this.trouveDans(i, r.reference, ...r.lots.map((l) => l.lot)));
+  }
+
+  produitsVus(i: ImportArrivage): ProduitImport[] {
+    return i.produits.filter((p) => this.trouveDans(i, p.reference, p.lot));
+  }
+
+  groupesVus(i: ImportArrivage): { palette: PaletteCossesImport | null; cartons: CartonImport[] }[] {
+    if (!this.texteRecherche(i)) return this.groupesCartons(i);
+    return this.groupesCartons(i)
+      .map((g) => ({ ...g, cartons: g.cartons.filter((c) => this.trouveDans(i, c.reference, c.lot)) }))
+      .filter((g) => g.cartons.length || this.separeesVues(i, g.palette?.separees ?? []).length);
+  }
+
+  separeesVues<T extends { reference: string; lot: string }>(i: ImportArrivage, liste: T[]): T[] {
+    return liste.filter((s) => this.trouveDans(i, s.reference, s.lot));
+  }
+
+  urgencesVues(i: ImportArrivage): ImportArrivage['urgences'] {
+    return i.urgences.filter((u) => this.trouveDans(i, u.reference, u.lot));
+  }
+
+  // Résumé de la recherche : réception et rangement de ce qui est trouvé dans cet import
+  resumeRecherche(i: ImportArrivage): {
+    references: string[]; lots: string[]; recus: number; ranges: number; cartons: number; palettes: number[];
+    pieces: { annoncees: number; recues: number } | null;
+    // où se trouve ce qui est cherché : chaque palette (ses cartons, son emplacement) et les colis séparés
+    ou: { palettes: { numero: number | null; cartons: number[]; emplacement: string | null; texte: string; ton: string }[]; separes: { colis: number; emplacement: string; range: boolean }[] };
+  } | null {
+    if (!this.texteRecherche(i)) return null;
+    const produits = this.produitsVus(i);
+    const refs = i.pieces ? this.refsVues(i, i.pieces.references) : [];
+    const cartons = this.groupesVus(i).flatMap((g) => g.cartons.map((c) => ({ ...c, palette: g.palette?.numero ?? null })));
+    const references = [...new Set([...produits.map((p) => p.reference), ...refs.map((r) => r.reference)])];
+    const lots = [...new Set([...produits.map((p) => p.lot), ...refs.flatMap((r) => r.lots.map((l) => l.lot))])];
+    return {
+      references,
+      lots,
+      recus: produits.reduce((t, p) => t + (p.recus ?? 0), 0),
+      ranges: produits.reduce((t, p) => t + (p.ranges ?? 0), 0),
+      cartons: cartons.length,
+      palettes: [...new Set(cartons.map((c) => c.palette).filter((n): n is number => n !== null))],
+      pieces: i.pieces ? { annoncees: refs.reduce((t, r) => t + r.attendues, 0), recues: refs.reduce((t, r) => t + r.recues, 0) } : null,
+      ou: {
+        palettes: this.groupesVus(i).filter((g) => g.cartons.length).map((g) => {
+          const p = g.palette;
+          const rangee = p?.statut === 'rangee' && p.en_stock;
+          return {
+            numero: p?.numero ?? null,
+            cartons: g.cartons.map((c) => c.numero),
+            emplacement: rangee ? p!.emplacement : null,
+            texte: !p ? 'cartons sans palette' : rangee ? 'Rangée en' : this.etatPalette(p).texte,
+            ton: p ? this.etatPalette(p).ton : 'tolere',
+          };
+        }),
+        // colis rangés ou à ranger seuls (cosses séparées) : leur emplacement imposé
+        separes: produits.flatMap((p) => (p.affectations ?? []).filter((a) => !a.palette).map((a) => ({ colis: a.colis, emplacement: a.emplacement, range: !!a.range }))),
+      },
+    };
+  }
+
   correspond(p: ProduitImport): boolean {
     const ref = this.filtreReference().trim().toLowerCase();
     const lot = this.filtreLot().trim().toLowerCase();

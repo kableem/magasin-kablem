@@ -15,7 +15,7 @@ const { verrouillerStock, libererStock } = require('../verrou-stock');
 const C = require('../cartons');
 
 const router = express.Router();
-const { correctionInterdite } = require('../corrections'); // plus de correction à la réception (2026-11-23)
+const { noterCorrection, nomColis } = require('../journal-corrections'); // corrections notées au journal (migration 044)
 const refus = (status, message) => Object.assign(new Error(message), { status });
 
 function transaction(traitement) {
@@ -49,11 +49,11 @@ async function cartonEnReception(connexion, id) {
 }
 
 // POST /:id/cosses { controle_id } : une cosse reçue séparée (oubli d'ouvrir le carton) entre dans le carton ouvert
-router.post('/:id/cosses', correctionInterdite, transaction(async (connexion, req) => {
+router.post('/:id/cosses', transaction(async (connexion, req) => {
   const c = await cartonEnReception(connexion, req.params.id);
   if (c.statut !== 'ouvert') throw refus(409, `Le carton n° ${c.numero} est terminé : rouvrez-le pour le modifier.`);
   const [[x]] = await connexion.query(
-    `SELECT id, reference, ticket, import_id FROM controles_mobile
+    `SELECT id, reference, lot, ticket, import_id FROM controles_mobile
      WHERE id = ? AND controle = 'reception' AND carton_id IS NULL AND resultat IN ('conforme', 'ecart_quantite', 'inconnu') FOR UPDATE`,
     [Number(req.body?.controle_id)]
   );
@@ -67,21 +67,23 @@ router.post('/:id/cosses', correctionInterdite, transaction(async (connexion, re
   await connexion.query('UPDATE cartons SET reference = ?, lot = ? WHERE id = ?', [vue.cosses ? c.reference : x.reference, vue.cosses ? c.lot : lot, c.id]);
   const [[maj]] = await connexion.query(`${C.SELECT_CARTON} WHERE c.id = ?`, [c.id]);
   const apres = await C.vueCarton(connexion, maj);
+  await noterCorrection(connexion, req, { importId: c.import_id, reference: x.reference, lot: x.lot, message: `cosse ${nomColis(x)} reçue séparée, mise dans le carton n° ${c.numero}.` });
   return { carton: apres, message: `Cosse mise dans le carton n° ${c.numero} (${apres.cosses} cosse${apres.cosses > 1 ? 's' : ''}).` };
 }));
 
 // POST /:id/sortir { controle_id | uuid } : choix « Cartons » par erreur, la cosse était séparée.
 // Elle reste reçue (pas de nouveau scan), seulement hors du carton.
-router.post('/:id/sortir', correctionInterdite, transaction(async (connexion, req) => {
+router.post('/:id/sortir', transaction(async (connexion, req) => {
   const c = await cartonEnReception(connexion, req.params.id);
   if (c.statut !== 'ouvert') throw refus(409, `Le carton n° ${c.numero} est terminé : rouvrez-le pour le modifier.`);
   const [[x]] = await connexion.query(
-    `SELECT id FROM controles_mobile WHERE carton_id = ? AND controle = 'reception' AND (id = ? OR uuid = ?) FOR UPDATE`,
+    `SELECT id, reference, lot, ticket FROM controles_mobile WHERE carton_id = ? AND controle = 'reception' AND (id = ? OR uuid = ?) FOR UPDATE`,
     [c.id, Number(req.body?.controle_id) || 0, String(req.body?.uuid ?? '')]
   );
   if (!x) throw refus(404, "Cette cosse n'est pas dans le carton");
   // une cosse séparée n'est jamais sur une palette (la palette ne porte que des cartons)
   await connexion.query('UPDATE controles_mobile SET carton_id = NULL, palette_cosses_id = NULL WHERE id = ?', [x.id]);
+  await noterCorrection(connexion, req, { importId: c.import_id, reference: x.reference, lot: x.lot, message: `cosse ${nomColis(x)} sortie du carton n° ${c.numero} : c'était une cosse séparée.` });
   const vue = await C.vueCarton(connexion, c);
   return { carton: vue, message: `Cosse remise en séparée. Le carton n° ${c.numero} a ${vue.cosses} cosse${vue.cosses > 1 ? 's' : ''}.` };
 }));
@@ -119,7 +121,7 @@ async function terminerCarton(connexion, c) {
 }
 
 // POST /:id/rouvrir : cosse oubliée ; impossible une fois l'étiquette imprimée
-router.post('/:id/rouvrir', correctionInterdite, transaction(async (connexion, req) => {
+router.post('/:id/rouvrir', transaction(async (connexion, req) => {
   const c = await cartonEnReception(connexion, req.params.id);
   if (c.statut === 'ouvert') return { carton: await C.vueCarton(connexion, c) };
   if (c.date_etiquette) throw refus(409, `L'étiquette du carton n° ${c.numero} est déjà imprimée : il ne se rouvre plus.`);
@@ -143,19 +145,21 @@ router.post('/:id/rouvrir', correctionInterdite, transaction(async (connexion, r
     await connexion.query('DELETE FROM cartons WHERE id = ?', [a.id]);
   }
   await connexion.query("UPDATE cartons SET statut = 'ouvert', ouvert_par = ?, date_termine = NULL WHERE id = ?", [req.utilisateur.id, c.id]);
+  await noterCorrection(connexion, req, { importId: c.import_id, reference: c.reference, lot: c.lot, message: `carton n° ${c.numero} (${c.reference} lot ${c.lot}) rouvert.` });
   return { carton: { ...(await C.vueCarton(connexion, c)), statut: 'ouvert' }, message: `Carton n° ${c.numero} rouvert : scannez la cosse oubliée, puis « Terminer le carton ».` };
 }));
 
 // DELETE /:id/cosses/:controle : cosse scannée par erreur, retirée du carton ouvert (elle redevient « non reçue »)
-router.delete('/:id/cosses/:controle', correctionInterdite, transaction(async (connexion, req) => {
+router.delete('/:id/cosses/:controle', transaction(async (connexion, req) => {
   const c = await cartonEnReception(connexion, req.params.id);
   if (c.statut !== 'ouvert') throw refus(409, `Le carton n° ${c.numero} est terminé : rouvrez-le pour le modifier.`);
   const [[x]] = await connexion.query(
-    "SELECT id, reception_id FROM controles_mobile WHERE id = ? AND carton_id = ? AND controle = 'reception' FOR UPDATE",
+    "SELECT id, reception_id, reference, lot, ticket FROM controles_mobile WHERE id = ? AND carton_id = ? AND controle = 'reception' FOR UPDATE",
     [req.params.controle, c.id]
   );
   if (!x) throw refus(404, "Cette cosse n'est pas dans le carton");
   await connexion.query('DELETE FROM controles_mobile WHERE id = ?', [x.id]);
+  await noterCorrection(connexion, req, { importId: c.import_id, reference: x.reference, lot: x.lot, message: `cosse ${nomColis(x)} retirée du carton n° ${c.numero} (scannée par erreur) : elle n'est plus reçue.` });
   // Import par référence : la ligne référence + lot est née des scans, elle perd cette cosse
   const [[ligne]] = await connexion.query(
     "SELECT r.id, r.quantite FROM receptions r JOIN imports i ON i.id = r.import_id WHERE r.id = ? AND i.mode = 'resume' FOR UPDATE",

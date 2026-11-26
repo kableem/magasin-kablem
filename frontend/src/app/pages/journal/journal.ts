@@ -125,7 +125,7 @@ export class Journal implements OnInit, OnDestroy {
   }
 
   lieu(l: LigneJournal): string {
-    if (l.controle === 'reception') return l.numero_livraison ?? (l.import_id ? `Import n° ${l.import_id}` : '');
+    if (l.controle === 'reception' || l.controle === 'correction') return l.numero_livraison ?? (l.import_id ? `Import n° ${l.import_id}` : '');
     if (l.controle === 'export') return l.destination ? `Sortie → ${l.destination}` : 'Sortie';
     // Ranger le magasin : départ → arrivée scannés
     if (l.controle === 'ranger') return [l.emplacement_prevu, l.emplacement_scanne].filter(Boolean).join(' → ');
