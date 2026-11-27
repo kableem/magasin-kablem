@@ -386,11 +386,20 @@ router.post('/:id/poser', operation('rangement', async (connexion, req) => {
       ...base, message: `${code} n'est pas un emplacement de ${LIBELLE[ligne.type]}s : posez le colis en ${u.emplacement_propose}. Rien n'est enregistré.`,
     });
   }
+  // Seul l'emplacement proposé est accepté. S'il a été pris entre-temps, l'application en propose un nouveau.
   const place = await placeVide(connexion, ligne.type, u.id);
-  if (place.pris.has(code)) {
+  let cible = u.emplacement_propose;
+  if (!cible || place.pris.has(cible)) {
+    cible = place.code;
+    if (cible) await connexion.query('UPDATE sorties_urgentes SET emplacement_propose = ? WHERE id = ?', [cible, u.id]);
+  }
+  if (!cible) {
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', { ...base, emplacements_prevus: [], message: "Aucun emplacement vide près de la porte : appelez le chef. Rien n'est enregistré." });
+  }
+  if (code !== cible) {
     return enregistrer(connexion, req, 'rangement', 'faux_emplacement', {
-      ...base, emplacements_prevus: place.code ? [{ code: place.code, quantite: 1 }] : [],
-      message: `${code} n'est pas vide : posez le colis sur un emplacement vide${place.code ? ' (le plus proche : ' + place.code + ')' : ''}. Rien n'est enregistré.`,
+      ...base, emplacements_prevus: [{ code: cible, quantite: 1 }],
+      message: `Posez le colis en ${cible}, pas en ${code}${cible !== u.emplacement_propose ? ` (${u.emplacement_propose} a été pris entre-temps)` : ''}. Rien n'est enregistré.`,
     });
   }
   const [[imp]] = await connexion.query('SELECT statut, numero_livraison FROM imports WHERE id = ? FOR UPDATE', [u.import_id]);

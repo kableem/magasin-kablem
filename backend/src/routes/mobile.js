@@ -890,12 +890,17 @@ async function rangerPalette(connexion, req, paletteId, scanne, code) {
   if (!R.estTampon(code) && R.typeEmplacement(code) !== 'connecteur') {
     return enregistrer(connexion, req, 'rangement', 'faux_emplacement', { ...donnees, message: `Une palette de cartons de cosses se range en haut (niveaux 3 et 4, 4 et 5 du bloc E), pas en ${code}. Rien n'est enregistré.` });
   }
+  // Seul l'emplacement donné par l'application est accepté (le même calcul que la suggestion) : la palette ne se pose
+  // jamais ailleurs. Si cette place a été prise entre-temps (autre palette), l'application en donne une nouvelle.
   const occ = await occupation(connexion, true);
-  if (occ.some((l) => l.emplacement === code && Number(l.quantite) > 0)) {
-    const place = C.emplacementPourCarton(occ, await capaciteTampon(connexion));
+  const place = C.emplacementPourCarton(occ, await capaciteTampon(connexion));
+  if (!place) {
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', { ...donnees, message: `Aucun emplacement vide ni place tampon libre pour ${nom} : appelez le chef. Rien n'est enregistré.` });
+  }
+  if (code !== place.code) {
     return enregistrer(connexion, req, 'rangement', 'faux_emplacement', {
-      ...donnees, emplacements_prevus: place ? [{ code: place.code, quantite: vue.cosses }] : [],
-      message: `${code} n'est pas vide : une palette va seule sur un emplacement entièrement vide${place ? ' (ex. ' + place.code + ')' : ''}. Rien n'est enregistré.`,
+      ...donnees, emplacements_prevus: [{ code: place.code, quantite: vue.cosses }],
+      message: `${nom} va en ${place.code}, pas en ${code}. Posez-la en ${place.code} et scannez cette étiquette. Rien n'est enregistré.`,
     });
   }
   // Une ligne de stock par ligne d'import, marquée de la palette (et du carton s'il est seul sur cette ligne)
