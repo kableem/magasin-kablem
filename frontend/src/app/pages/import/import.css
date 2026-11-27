@@ -564,3 +564,6 @@ li[data-type='en_trop'] .type-ecart, li[data-type='hors_import'] .type-ecart { c
 .rr-palette[data-ton='conforme'] { border-color: #9fd8b6; }
 .rr-palette[data-ton='en_trop'] { border-color: #f3c58a; }
 .rr-palette .rr-empl b { padding: 1px 7px; font-family: Consolas, monospace; background: #ffd21f; border-radius: 5px; }
+
+/* Nombre d'étiquettes à imprimer de l'import (impression palette par palette seulement) */
+.a-imprimer-total { padding: 6px 12px; font-size: 13px; font-weight: 700; color: #b81818; background: #fdecec; border-radius: 999px; }

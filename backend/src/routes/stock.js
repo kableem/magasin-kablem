@@ -323,7 +323,10 @@ router.get('/verification', async (req, res, next) => {
        WHERE p.quantite <= 0
           OR (i.statut <> 'ajoute'
               -- bobines rangées palette par palette pendant la réception : normales
-              AND NOT EXISTS (SELECT 1 FROM affectations_colis a WHERE a.reception_id = r.id AND a.palette_id IS NOT NULL AND a.emplacement = p.emplacement))`
+              AND NOT EXISTS (SELECT 1 FROM affectations_colis a WHERE a.reception_id = r.id AND a.emplacement = p.emplacement
+                              AND (a.palette_id IS NOT NULL OR a.range_le IS NOT NULL)) -- colis rangé pendant la réception aussi
+              -- palette de cosses (ou de connecteurs) rangée pendant la réception : normale aussi
+              AND p.palette_cosses_id IS NULL)`
     );
     ajouter(
       'imports', 'Lien avec les imports',

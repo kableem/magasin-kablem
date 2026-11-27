@@ -218,7 +218,7 @@
                 <div class="rr-chiffre"><b>{{ nombre(rr.pieces.recues) }}</b><small>/ {{ nombre(rr.pieces.annoncees) }} pièces reçues</small></div>
               }
               <div class="rr-chiffre"><b>{{ rr.recus }}</b><small>colis reçus</small></div>
-              <div class="rr-chiffre" [class.complet]="i.statut === 'ajoute' && rr.ranges >= rr.recus && rr.recus > 0"><b>{{ i.statut === 'ajoute' ? rr.ranges : '—' }}</b><small>{{ i.statut === 'ajoute' ? 'rangé(s)' : 'rangement après la réception' }}</small></div>
+              <div class="rr-chiffre" [class.complet]="rr.ranges >= rr.recus && rr.recus > 0"><b>{{ rr.ranges }}</b><small>rangé(s)</small></div>
               @if (rr.cartons) {
                 <div class="rr-chiffre"><b>{{ rr.cartons }}</b><small>carton(s){{ rr.palettes.length ? ' · palette ' + rr.palettes.join(', ') : '' }}</small></div>
               }
@@ -311,12 +311,9 @@
           <div class="cartons-import">
             <div class="entete-cartons">
               <h3 class="titre-lots">Palettes de cosses ({{ i.palettes_cosses.length }}) · {{ i.cartons.length }} carton(s)</h3>
-              <!-- Plus de « Réimprimer toutes les étiquettes » : on réimprime palette par palette, ou un seul carton -->
+              <!-- Pas d'impression de toutes les étiquettes de l'import : seulement palette par palette (ou un seul carton) -->
               @if (cartonsAImprimer(i)) {
-                <button type="button" class="btn btn-principal petit" [disabled]="impression() === i.id" (click)="imprimerCartons(i)">
-                  <svg viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" /></svg>
-                  Imprimer les {{ cartonsAImprimer(i) }} étiquette(s) à imprimer
-                </button>
+                <span class="a-imprimer-total">{{ cartonsAImprimer(i) }} étiquette(s) à imprimer : bouton rouge sur chaque palette</span>
               }
             </div>
             <p class="aide-impression">
@@ -504,7 +501,7 @@
                       @if (p.en_trop) {
                         <small class="en-trop">+{{ p.en_trop }} en trop{{ p.colis_en_trop?.length ? ' (n° ' + p.colis_en_trop!.join(', ') + ')' : '' }}</small>
                       }
-                      @if (i.statut === 'ajoute' && p.recus) {
+                      @if ((i.statut === 'ajoute' || p.ranges) && p.recus) {
                         <small class="ranges">{{ p.ranges ?? 0 }} rangé(s)</small>
                       }
                     </td>

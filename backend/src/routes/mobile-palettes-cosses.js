@@ -88,7 +88,7 @@ async function terminer(connexion, p) {
   const aImprimer = r.vue.etiquettes_a_imprimer;
   return {
     palette: r.vue,
-    message: `Palette n° ${p.numero} terminée : ${r.vue.contenu}.${aImprimer ? ` Étiquette${aImprimer > 1 ? 's' : ''} des cartons : sur le web (page Import).` : ''} La palette suivante s'ouvre au prochain carton.`,
+    message: `Palette n° ${p.numero} terminée : ${r.vue.contenu}.${aImprimer ? ` Étiquette${aImprimer > 1 ? 's' : ''} des cartons : sur le web (page Import).` : ''} Elle peut être rangée tout de suite (Rangement), même pendant la réception. La palette suivante s'ouvre au prochain carton.`,
   };
 }
 

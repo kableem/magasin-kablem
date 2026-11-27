@@ -139,6 +139,22 @@ async function emplacementsPrevus(connexion, ligne) {
   return plan.filter((p) => p.id === ligne.id).map((p) => ({ code: p.emplacement, quantite: p.quantite }));
 }
 
+// Rangement pendant la réception (décision du 2026-11-27) : un colis reçu se range tout de suite, sans attendre la
+// validation de l'import. Sa place est calculée maintenant, avec les mêmes règles qu'à la fin de la réception
+// (niveau, capacité, zone tampon), pour ce seul colis. null si aucune place.
+async function placeAvantValidation(connexion, receptionId) {
+  const [[p]] = await connexion.query(
+    'SELECT id, type, taille_bobine, type_cosse, reference, lot, longueur, largeur, hauteur, poids FROM receptions WHERE id = ?',
+    [receptionId]
+  );
+  if (!p) return null;
+  const nombre = (v) => (v === null ? null : Number(v));
+  const produit = { ...p, quantite: 1, longueur: nombre(p.longueur), largeur: nombre(p.largeur), hauteur: nombre(p.hauteur), poids: nombre(p.poids) };
+  const enPlace = (await occupation(connexion, true)).filter((l) => l.emplacement);
+  const plan = R.proposerPlan([produit], enPlace, await parametresRangement(connexion));
+  return plan.find((x) => x.emplacement)?.emplacement ?? null;
+}
+
 const texteEmplacements = (liste) => liste.map((e) => e.code ?? 'non rangé').join(', ') || null;
 
 // Réponse pour le téléphone (même forme pour un contrôle enregistré et pour une suggestion)
@@ -758,9 +774,20 @@ router.post('/rangement/suggestion', async (req, res, next) => {
       });
     }
     if (ligne.statut_import !== 'ajoute') {
-      return repondre('import_en_attente', {
-        ...donnees,
-        message: `L'import ${ligne.numero_livraison ?? 'n° ' + ligne.import_id} n'est pas encore ajouté au stock : rangement pas encore possible. Demandez au responsable.`,
+      // Réception en cours : un colis (ticket avec n° de colis) se range tout de suite ; un ticket de lot attend la validation
+      if (!ticket.cle) {
+        return repondre('import_en_attente', {
+          ...donnees,
+          message: `L'import ${ligne.numero_livraison ?? 'n° ' + ligne.import_id} n'est pas encore ajouté au stock : rangement pas encore possible. Demandez au responsable.`,
+        });
+      }
+      const code = await placeAvantValidation(connexion, ligne.id);
+      if (!code) return repondre('sans_emplacement', { ...donnees, message: `Aucune place libre pour le colis n° ${ticket.colis} : appelez le chef.` });
+      const niveau = R.lireCode(code)?.niveau ?? null;
+      return repondre('a_ranger', {
+        ...donnees, emplacements_prevus: [{ code, quantite: 1 }],
+        extra: { suggestion: { code, quantite: 1, ranges: 0, niveau, tampon: R.estTampon(code), elevateur: niveau >= 4 } },
+        message: `Colis n° ${ticket.colis} : allez en ${code}${niveau >= 4 ? ' (élévateur)' : ''} et scannez l'étiquette de l'emplacement.`,
       });
     }
     // Colis : son emplacement imposé
@@ -829,8 +856,10 @@ async function etatPalette(connexion, paletteId, scanne) {
   if (p.statut === 'rangee') {
     return { refus: ['deja_traite', { ...base, message: `${nom} est déjà rangée${vue.emplacement ? ' en ' + vue.emplacement : ''} : pas de double rangement.` }] };
   }
-  if (p.statut === 'ouverte' || imp.statut !== 'ajoute') {
-    return { refus: ['import_en_attente', { ...base, message: `La réception de l'import ${imp.numero_livraison ?? 'n° ' + imp.id} n'est pas terminée : terminez-la, puis rangez la palette n° ${p.numero}.` }] };
+  // Une palette terminée se range tout de suite, même si la réception de l'import continue (décision du 2026-11-27) :
+  // un magasinier reçoit pendant qu'un autre range. Seule une palette encore ouverte attend.
+  if (p.statut === 'ouverte') {
+    return { refus: ['import_en_attente', { ...base, message: `La palette n° ${p.numero} de l'import ${imp.numero_livraison ?? 'n° ' + imp.id} est encore ouverte : touchez « Terminer la palette » sur le téléphone de réception, puis rangez-la.` }] };
   }
   if (vue.hors_stock) {
     return { refus: ['sans_emplacement', { ...base, message: `${nom} porte ${vue.hors_stock} cosse(s) d'une référence absente du catalogue Articles : ajoutez-la au catalogue, puis « Entrer au stock » sur le web (page Import).` }] };
@@ -924,12 +953,7 @@ async function rangerColis(connexion, req, ticket, t, code) {
   const donnees = { ...t.base, ligne, quantite_attendue: ligne.attendue, emplacements_prevus: prevus };
   const affPalette = await affectationPalette(connexion, ticket.cle);
   if (affPalette) return rangerColisPalette(connexion, req, ticket, donnees, affPalette, code);
-  if (ligne.statut_import !== 'ajoute') {
-    return enregistrer(connexion, req, 'rangement', 'import_en_attente', {
-      ...donnees,
-      message: `L'import ${ligne.numero_livraison ?? 'n° ' + ligne.import_id} n'est pas encore validé : rangement pas encore possible. Rien n'est enregistré.`,
-    });
-  }
+  if (ligne.statut_import !== 'ajoute') return rangerColisAvantValidation(connexion, req, ticket, donnees, ligne, code);
   const aff = await affectationDuColis(connexion, ligne.id, ticket.cle);
   if (!aff) {
     return enregistrer(connexion, req, 'rangement', 'faux_emplacement', {
@@ -961,6 +985,37 @@ async function rangerColis(connexion, req, ticket, t, code) {
   return enregistrer(connexion, req, 'rangement', 'bon_emplacement', {
     ...donnees, emplacements_prevus: impose, extra: { stock: { ranges: auStock, prevus: attendus } },
     message: `${ticket.reference} lot ${ticket.lot} (colis n° ${ticket.colis}) rangé en ${code} : ajouté au stock${attendus > 1 ? ` (${auStock}/${attendus} au stock)` : ''}.`,
+  });
+}
+
+// Colis rangé pendant la réception de son import : la place calculée maintenant (placeAvantValidation) est la seule
+// acceptée. Le colis entre au stock tout de suite ; son affectation est marquée rangée, donc la fin de la réception
+// ne le planifie pas une 2e fois (produitsImport et attribuerColis le sautent).
+async function rangerColisAvantValidation(connexion, req, ticket, donnees, ligne, code) {
+  const place = await placeAvantValidation(connexion, ligne.id);
+  if (!place) {
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', { ...donnees, message: `Aucune place libre pour le colis n° ${ticket.colis} : appelez le chef. Rien n'est enregistré.` });
+  }
+  const impose = [{ code: place, quantite: 1 }];
+  if (code !== place) {
+    return enregistrer(connexion, req, 'rangement', 'faux_emplacement', {
+      ...donnees, emplacements_prevus: impose,
+      message: `Le colis n° ${ticket.colis} va en ${place}, pas en ${code}. Rien n'est enregistré.`,
+    });
+  }
+  await poserQuantite(connexion, ligne.id, code, 1);
+  await connexion.query(
+    `INSERT INTO plans_rangement (reception_id, emplacement, quantite, ranges) VALUES (?, ?, 1, 1)
+     ON DUPLICATE KEY UPDATE quantite = quantite + 1, ranges = ranges + 1`,
+    [ligne.id, code]
+  );
+  await connexion.query(
+    'INSERT INTO affectations_colis (reception_id, ticket, colis, emplacement, range_le) VALUES (?, ?, ?, ?, NOW())',
+    [ligne.id, ticket.cle, ticket.colis, code]
+  );
+  return enregistrer(connexion, req, 'rangement', 'bon_emplacement', {
+    ...donnees, emplacements_prevus: impose,
+    message: `${ticket.reference} lot ${ticket.lot} (colis n° ${ticket.colis}) rangé en ${code} : ajouté au stock, pendant la réception de l'import.`,
   });
 }
 

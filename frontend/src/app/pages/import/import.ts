@@ -276,9 +276,6 @@ export class Import implements OnInit, OnDestroy {
     this.ouvrirPdf(i, this.service.pointagePdf(i.id));
   }
 
-  imprimerCartons(i: ImportArrivage): void {
-    this.ouvrirPdf(i, this.service.etiquettesCartons(i.id));
-  }
 
   // Le PDF s'ouvre dans un nouvel onglet, prêt pour l'imprimante d'étiquettes (format 115 × 75 mm, échelle 100 %)
   private ouvrirPdf(i: ImportArrivage, demande: Observable<Blob>): void {
@@ -736,13 +733,17 @@ export class Import implements OnInit, OnDestroy {
     }
   }
 
+  // Tout ce qui est reçu se range pendant la réception (en parallèle), sans attendre la validation
   etatRangement(i: ImportArrivage): 'bloque' | 'en_cours' | 'fait' {
-    if (i.statut !== 'ajoute') return 'bloque';
+    if (i.statut !== 'ajoute') return i.avancement?.ranges ? 'en_cours' : 'bloque';
     return i.etape === 'range' || i.ajout_force ? 'fait' : 'en_cours';
   }
 
   texteRangement(i: ImportArrivage): string {
-    if (i.statut !== 'ajoute') return 'Possible après la validation de la réception';
+    if (i.statut !== 'ajoute') {
+      const r = i.avancement?.ranges ?? 0;
+      return r ? `En même temps que la réception · ${r} rangé(s)` : 'Possible dès qu’un produit est reçu (mobile, Rangement)';
+    }
     if (i.ajout_force) return 'Entré au stock directement (secours)';
     const a = i.avancement;
     const colis = a?.colis_recus ?? a?.recus ?? 0;

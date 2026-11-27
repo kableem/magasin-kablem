@@ -955,6 +955,9 @@ async function produitsImport(connexion, importId) {
             r.quantite - COALESCE(rc.quantite, 0)
               -- bobines déjà rangées palette par palette pendant la réception
               - (SELECT COUNT(*) FROM affectations_colis a WHERE a.reception_id = r.id AND a.palette_id IS NOT NULL AND a.range_le IS NOT NULL)
+              -- colis rangés un par un pendant la réception (avant la validation) : déjà au stock
+              - (SELECT COUNT(*) FROM affectations_colis a WHERE a.reception_id = r.id AND a.palette_id IS NULL AND a.range_le IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM sorties_urgentes u WHERE u.ticket = a.ticket AND u.date_posee IS NOT NULL)) -- (les colis d'urgence sont comptés juste en dessous)
               -- cosses reçues sur une palette (cartons ou séparées) : elles entrent au stock au rangement de leur palette,
               -- sans plan (les cosses séparées hors palette de la même ligne gardent leur place)
               - (SELECT COUNT(*) FROM controles_mobile c WHERE c.reception_id = r.id AND (c.carton_id IS NOT NULL OR c.palette_cosses_id IS NOT NULL)
